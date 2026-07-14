@@ -2,6 +2,48 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, createSeriesMarkers, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type ISeriesApi, type ISeriesMarkersPluginApi, type SeriesMarker, type SeriesType, type Time } from 'lightweight-charts'
 import { fetchCandles, type CandleBar } from '../api/yahooFinance'
 
+type TF = 'D' | 'W' | 'M'
+
+function sanitizeCandles(candles: CandleBar[]): CandleBar[] {
+  if (candles.length === 0) return candles
+  // 유효한 가격 범위 기준: 전체 중앙값의 1/20 ~ 20배
+  const closes = candles.map((c) => c.close).filter((v) => v > 0).sort((a, b) => a - b)
+  if (closes.length === 0) return candles
+  const median = closes[Math.floor(closes.length / 2)]
+  const lo = median / 20
+  const hi = median * 20
+  return candles.filter(
+    (c) => c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0
+      && c.close >= lo && c.close <= hi
+      && c.open >= lo && c.open <= hi
+      && c.high >= c.low
+  )
+}
+
+function aggregateCandles(candles: CandleBar[], tf: TF): CandleBar[] {
+  if (tf === 'D') return candles
+  const groups = new Map<string, CandleBar>()
+  for (const c of candles) {
+    const d = new Date(c.time * 1000)
+    let key: string
+    let t: number
+    if (tf === 'W') {
+      const day = d.getUTCDay()
+      const diff = day === 0 ? -6 : 1 - day
+      const mon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + diff))
+      key = mon.toISOString().slice(0, 10)
+      t = Math.floor(mon.getTime() / 1000)
+    } else {
+      key = `${d.getUTCFullYear()}-${d.getUTCMonth()}`
+      t = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000)
+    }
+    const g = groups.get(key)
+    if (!g) groups.set(key, { time: t, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume })
+    else { g.high = Math.max(g.high, c.high); g.low = Math.min(g.low, c.low); g.close = c.close; g.volume += c.volume }
+  }
+  return Array.from(groups.values()).sort((a, b) => a.time - b.time)
+}
+
 function calcRSI(candles: CandleBar[], period = 14): { time: number; value: number }[] {
   if (candles.length < period + 1) return []
   const results: { time: number; value: number }[] = []
@@ -24,8 +66,6 @@ function calcRSI(candles: CandleBar[], period = 14): { time: number; value: numb
   return results
 }
 
-type Range = '1mo' | '3mo' | '6mo' | '1y' | '2y'
-
 interface TradeMark {
   type: 'buy' | 'sell'
   timestamp: number
@@ -42,17 +82,17 @@ interface StockChartProps {
   onToggleFullscreen?: () => void
   showSidePanel?: boolean
   onToggleSidePanel?: () => void
+  compactHeight?: number
+  hideControls?: boolean
 }
 
-const RANGES: { label: string; value: Range }[] = [
-  { label: '1개월', value: '1mo' },
-  { label: '3개월', value: '3mo' },
-  { label: '6개월', value: '6mo' },
-  { label: '1년', value: '1y' },
-  { label: '2년', value: '2y' },
+const TF_OPTS: { label: string; value: TF }[] = [
+  { label: '일봉', value: 'D' },
+  { label: '주봉', value: 'W' },
+  { label: '월봉', value: 'M' },
 ]
 
-export default function StockChart({ symbol, candles: externalCandles, cutoffDate, trades, startDate, changePct, isFullscreen = false, onToggleFullscreen, showSidePanel, onToggleSidePanel }: StockChartProps) {
+export default function StockChart({ symbol, candles: externalCandles, cutoffDate, trades, startDate, changePct, isFullscreen = false, onToggleFullscreen, showSidePanel, onToggleSidePanel, compactHeight, hideControls = false }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rsiContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -66,11 +106,12 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
   const isSyncingRef = useRef(false)
   const [showRsi, setShowRsi] = useState(false)
   const [rsiValue, setRsiValue] = useState<number | null>(null)
-  const [range, setRange] = useState<Range>('3mo')
+  const [tf, setTf] = useState<TF>('D')
+  const allBarsRef = useRef<CandleBar[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [chartHeight, setChartHeight] = useState(() =>
-    Math.max(420, Math.min(720, window.innerHeight - 360))
+    compactHeight ?? Math.max(420, Math.min(720, window.innerHeight - 360))
   )
   const [volumeRatio, setVolumeRatio] = useState(0.25)
   const isHistoryMode = externalCandles !== undefined
@@ -81,7 +122,9 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
 
   useEffect(() => {
     const updateHeight = () => {
-      if (isFullscreen) {
+      if (compactHeight) {
+        setChartHeight(compactHeight)
+      } else if (isFullscreen) {
         setChartHeight(calcFullscreenHeight(showRsi))
       } else {
         setChartHeight(Math.max(420, Math.min(720, window.innerHeight - 360)))
@@ -90,7 +133,7 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
     updateHeight()
     window.addEventListener('resize', updateHeight)
     return () => window.removeEventListener('resize', updateHeight)
-  }, [isFullscreen, showRsi, calcFullscreenHeight])
+  }, [isFullscreen, showRsi, calcFullscreenHeight, compactHeight])
 
   useEffect(() => {
     chartRef.current?.applyOptions({ height: chartHeight })
@@ -132,6 +175,22 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
       timeScale: {
         borderColor: '#374151',
         timeVisible: true,
+        tickMarkFormatter: (time: number) => {
+          const d = new Date(time * 1000)
+          const y = d.getUTCFullYear()
+          const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+          const day = String(d.getUTCDate()).padStart(2, '0')
+          return `${y}.${m}.${day}`
+        },
+      },
+      localization: {
+        timeFormatter: (time: number) => {
+          const d = new Date(time * 1000)
+          const y = d.getUTCFullYear()
+          const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+          const day = String(d.getUTCDate()).padStart(2, '0')
+          return `${y}.${m}.${day}`
+        },
       },
       width: containerRef.current.clientWidth,
       height: chartHeight,
@@ -153,7 +212,7 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
         grid: { vertLines: { color: '#1F2937' }, horzLines: { color: '#1F2937' } },
         crosshair: { vertLine: { color: '#6366F1' }, horzLine: { color: '#6366F1' } },
         rightPriceScale: { borderColor: '#374151', scaleMargins: { top: 0.1, bottom: 0.1 } },
-        timeScale: { borderColor: '#374151', timeVisible: true },
+        timeScale: { borderColor: '#374151', timeVisible: true, visible: false },
         width: rsiContainerRef.current.clientWidth,
         height: 120,
         handleScroll: false,
@@ -253,13 +312,21 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
     })
   }
 
-  const applyBars = (bars: CandleBar[]) => {
+  const applyBars = (bars: CandleBar[], overrideTf?: TF) => {
     if (!chartRef.current) return
     ensureSeries()
     if (!seriesRef.current || !volumeSeriesRef.current) return
 
+    allBarsRef.current = bars  // 원본 보존 (tf 변경 시 재집계용)
+
+    // 사용자가 이미 차트를 조작했으면 현재 뷰를 저장해서 복원
+    const savedRange = initialFitDoneRef.current
+      ? chartRef.current.timeScale().getVisibleLogicalRange()
+      : null
+
     const cutoffSec = cutoffDate != null ? Math.floor(cutoffDate / 1000) : Infinity
-    const filtered = bars.filter((b) => b.time <= cutoffSec)
+    const daily = sanitizeCandles(bars.filter((b) => b.time <= cutoffSec))
+    const filtered = aggregateCandles(daily, overrideTf ?? tf)
 
     const formatted = filtered.map((b) => ({
       time: b.time as unknown as import('lightweight-charts').Time,
@@ -332,6 +399,8 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
     if (!initialFitDoneRef.current) {
       chartRef.current.timeScale().fitContent()
       initialFitDoneRef.current = true
+    } else if (savedRange) {
+      chartRef.current.timeScale().setVisibleLogicalRange(savedRange)
     }
   }
 
@@ -342,9 +411,18 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
     setLoading(false)
     applyBars(externalCandles)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [externalCandles, cutoffDate, trades])
+  }, [externalCandles, cutoffDate, trades, tf])
 
-  // 내부 fetch 모드 (실시간)
+  // tf 변경 시 재집계 (fetch 모드 — 원본 데이터 재사용)
+  useEffect(() => {
+    if (externalCandles !== undefined) return  // history 모드는 위 effect가 처리
+    if (allBarsRef.current.length === 0) return
+    initialFitDoneRef.current = false  // tf 바뀌면 전체 기간으로 재fit
+    applyBars(allBarsRef.current, tf)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tf])
+
+  // 내부 fetch 모드 (실시간) — 항상 2년치 데이터 fetch
   useEffect(() => {
     if (externalCandles !== undefined) return
     if (!chartRef.current) return
@@ -354,8 +432,9 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
       setLoading(true)
       setError(null)
       try {
-        const bars: CandleBar[] = await fetchCandles(symbol, range)
+        const bars: CandleBar[] = await fetchCandles(symbol, '3y')
         if (cancelled) return
+        initialFitDoneRef.current = false
         applyBars(bars)
       } catch (e) {
         if (!cancelled) setError('차트 데이터를 불러오지 못했습니다.')
@@ -366,22 +445,20 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
     }
 
     load()
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, range, externalCandles])
+  }, [symbol, externalCandles])
 
   return (
     <div className={isFullscreen
       ? 'flex flex-col h-full bg-gray-900'
       : 'bg-gray-900 rounded-xl border border-gray-800 overflow-hidden'
     }>
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+      <div className={`flex items-center justify-between border-b border-gray-800 ${hideControls ? 'px-3 py-1.5' : 'px-4 py-3'}`}>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-400 font-medium">주가 차트</span>
+          {!hideControls && <span className="text-sm text-gray-400 font-medium">주가 차트</span>}
           {changePct != null && (
-            <span className={`text-sm font-bold tabular-nums ${changePct >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
+            <span className={`${hideControls ? 'text-xs' : 'text-sm'} font-bold tabular-nums ${changePct >= 0 ? 'text-red-400' : 'text-blue-400'}`}>
               {changePct >= 0 ? '▲' : '▼'} {Math.abs(changePct).toFixed(2)}%
             </span>
           )}
@@ -390,43 +467,45 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#A78BFA]" />MA20</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#34D399]" />MA60</span>
           </div>
-          <button
-            onClick={() => setShowRsi((v) => !v)}
-            className={`text-xs px-2 py-0.5 rounded border transition-colors border-l border-gray-700 ml-1 ${showRsi ? 'bg-indigo-600/30 border-indigo-500/40 text-indigo-300' : 'border-gray-700 text-gray-500 hover:text-gray-300'}`}
-          >
-            RSI
-          </button>
-          <div className="flex items-center gap-1.5 text-xs text-gray-400 border-l border-gray-700 pl-3">
-            <span>거래량</span>
-            <input
-              type="range"
-              min={10}
-              max={45}
-              value={Math.round(volumeRatio * 100)}
-              onChange={(e) => setVolumeRatio(Number(e.target.value) / 100)}
-              className="w-16 h-1 accent-indigo-500 cursor-pointer"
-            />
-            <span className="w-6 text-right">{Math.round(volumeRatio * 100)}%</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {!isHistoryMode && (
-            <div className="flex gap-1">
-              {RANGES.map((r) => (
-                <button
-                  key={r.value}
-                  onClick={() => setRange(r.value)}
-                  className={`px-2.5 py-1 text-xs rounded-lg transition-colors ${
-                    range === r.value
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                  }`}
-                >
-                  {r.label}
-                </button>
-              ))}
+          {!hideControls && (
+            <button
+              onClick={() => setShowRsi((v) => !v)}
+              className={`text-xs px-2 py-0.5 rounded border transition-colors border-l border-gray-700 ml-1 ${showRsi ? 'bg-indigo-600/30 border-indigo-500/40 text-indigo-300' : 'border-gray-700 text-gray-500 hover:text-gray-300'}`}
+            >
+              RSI
+            </button>
+          )}
+          {!hideControls && (
+            <div className="flex items-center gap-1.5 text-xs text-gray-400 border-l border-gray-700 pl-3">
+              <span>거래량</span>
+              <input
+                type="range"
+                min={10}
+                max={45}
+                value={Math.round(volumeRatio * 100)}
+                onChange={(e) => setVolumeRatio(Number(e.target.value) / 100)}
+                className="w-16 h-1 accent-indigo-500 cursor-pointer"
+              />
+              <span className="w-6 text-right">{Math.round(volumeRatio * 100)}%</span>
             </div>
           )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            {TF_OPTS.map((t) => (
+              <button
+                key={t.value}
+                onClick={() => setTf(t.value)}
+                className={`px-2.5 py-1 text-xs rounded-lg transition-colors ${
+                  tf === t.value
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
           {isFullscreen && onToggleSidePanel && (
             <button
               onClick={onToggleSidePanel}
@@ -441,7 +520,7 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
               </svg>
             </button>
           )}
-          <button
+          {onToggleFullscreen && <button
             onClick={onToggleFullscreen}
             title={isFullscreen ? '축소 (ESC)' : '전체화면'}
             className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
@@ -455,7 +534,7 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
               </svg>
             )}
-          </button>
+          </button>}
         </div>
       </div>
       <div className="relative">

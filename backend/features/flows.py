@@ -37,7 +37,8 @@ def calc_flow_features(
     flows_series = (
         flows_df.set_index("date")["foreign_net"]
         .reindex(price_dates)       # 거래일 기준으로 재인덱스
-        .ffill()                    # 수급 데이터 없는 날은 전일 값으로 채움
+        .ffill(limit=5)             # 수급 데이터 없는 날은 최대 5거래일까지 전일 값으로 채움
+                                    # (flows는 일별 표시용. 역산의 30거래일 상한과 용도가 다름)
         .astype(float)
     )
 

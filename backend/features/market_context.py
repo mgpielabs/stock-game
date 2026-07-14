@@ -44,24 +44,54 @@ def build_market_returns(all_closes: pd.DataFrame, symbol_market_map: Dict[str, 
     return market_returns
 
 
+MIN_SECTOR_MEMBERS = 3  # 이 수 미만으로 가격 데이터가 있는 업종은 시장 평균으로 폴백
+
+
 def build_sector_returns(
     all_closes: pd.DataFrame,
     symbol_market_map: Dict[str, str],
     market_rets: Optional[Dict[str, pd.Series]] = None,
+    symbol_sector_map: Optional[Dict[str, Optional[str]]] = None,
 ) -> Dict[str, pd.Series]:
     """
-    현재는 sector 정보가 없으므로 시장(KOSPI/KOSDAQ) 구분을 섹터로 대용
-    sector 데이터가 수집되면 이 함수만 수정하면 됨
+    업종(섹터) 코드(stocks.sector, DART induty_code 기반)별 일별 평균 수익률 계산.
 
-    반환: {symbol: sector_return_series}  → 각 symbol의 섹터(시장) 평균 수익률
+    symbol_sector_map이 없거나 해당 종목의 sector가 NULL/소속 종목수<MIN_SECTOR_MEMBERS면
+    시장(KOSPI/KOSDAQ) 평균으로 폴백 (이전 placeholder 동작 — sector_collector.py로 아직
+    업종코드를 못 가져온 종목/세션 한도로 일부만 수집된 경우 안전하게 동작).
+
+    반환: {symbol: sector_return_series}
     """
-    # 현재 구현: market = sector proxy
     if market_rets is None:
         market_rets = build_market_returns(all_closes, symbol_market_map)
 
+    if not symbol_sector_map:
+        # 업종코드 자체가 없으면 전부 시장 평균으로 폴백 (이전 동작과 동일)
+        return {sym: market_rets.get(market, pd.Series(dtype=float))
+                for sym, market in symbol_market_map.items()}
+
+    daily_ret = all_closes.pct_change(1)
+
+    # 업종코드별 그룹 (가격 데이터가 있는 종목만)
+    sector_groups: Dict[str, list] = {}
+    for sym, sector in symbol_sector_map.items():
+        if sector and sym in daily_ret.columns:
+            sector_groups.setdefault(sector, []).append(sym)
+
+    sector_rets: Dict[str, pd.Series] = {}
+    for sector, syms in sector_groups.items():
+        if len(syms) < MIN_SECTOR_MEMBERS:
+            continue
+        sector_rets[sector] = daily_ret[syms].median(axis=1)
+
     sector_ret_map: Dict[str, pd.Series] = {}
     for sym, market in symbol_market_map.items():
-        sector_ret_map[sym] = market_rets.get(market, pd.Series(dtype=float))
+        sector = symbol_sector_map.get(sym)
+        if sector and sector in sector_rets:
+            sector_ret_map[sym] = sector_rets[sector]
+        else:
+            # 업종 미수집/소수 업종 종목 → 시장 평균 폴백
+            sector_ret_map[sym] = market_rets.get(market, pd.Series(dtype=float))
 
     return sector_ret_map
 

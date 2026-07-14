@@ -349,7 +349,7 @@ export default function HelpPage() {
         {/* 하단 링크 */}
         <div className="flex gap-3 flex-wrap">
           <Link
-            to="/ai-recommend"
+            to="/recommend"
             className="flex-1 min-w-fit bg-gray-900 border border-gray-800 hover:border-emerald-500/50 rounded-xl px-5 py-4 text-center transition-all"
           >
             <p className="text-emerald-400 font-medium text-sm">AI 추천 종목</p>

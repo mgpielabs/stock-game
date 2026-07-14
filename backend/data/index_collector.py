@@ -13,9 +13,15 @@ KOSPI / KOSDAQ 지수 일봉 수집기
 import argparse
 import logging
 import re
+import sys
 import time
 from datetime import date, datetime, timedelta
 from typing import Optional
+
+# daily_pipeline.py가 자식 프로세스 stdout을 UTF-8로 디코딩하므로(run() 참고) 맞춰줌 —
+# 콘솔이 cp949인 환경(수동 실행 .bat 등)에서 안 맞추면 UnicodeEncodeError 스팸 발생(2026-06-23)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import requests
 import pandas as pd
@@ -26,7 +32,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),  # 기본값(stderr)은 위 reconfigure 효과를 못 받음
         logging.FileHandler("index_collector.log", encoding="utf-8"),
     ],
 )

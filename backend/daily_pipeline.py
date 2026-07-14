@@ -11,7 +11,9 @@
 """
 
 import argparse
+import ctypes
 import logging
+import os
 import socket
 import subprocess
 import sys
@@ -19,12 +21,45 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
+# 콘솔이 cp949인 환경(.bat 더블클릭 등)에서 UnicodeEncodeError 방지 — 자식 프로세스들에도
+# 동일하게 적용된 패턴(collector.py 등 참고, 2026-06-23)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT     = Path(__file__).parent
 DATA_DIR = ROOT / "data"
 FEAT_DIR = ROOT / "features"
 SRV_DIR  = ROOT / "server"
+SCRIPTS_DIR = ROOT / "scripts"
+ML_DIR   = ROOT / "ml"
 LOG_FILE = ROOT / "pipeline_daily.log"
-PYTHON   = DATA_DIR / ".venv" / "Scripts" / "python.exe"
+PYTHON   = ROOT / ".venv" / "Scripts" / "python.exe"
+
+# 중복 실행 방지용 락 — 작업 스케줄러/수동 .bat/인앱 버튼(POST /api/update) 어느 경로로
+# 시작했든 같은 락을 공유해서 동시 실행을 막음(2026-06-23)
+LOCK_FILE = ROOT / "daily_pipeline.pid"
+
+# 콘솔 창 숨김 + CPU 우선순위 최저(게임 등 포그라운드 작업에 영향 안 주도록 유휴 시간에만 CPU 사용)
+# — 데이터 수집/피처 계산(run())에만 적용. 서버는 SERVER_FLAGS로 별도 처리(정상 우선순위 유지)
+SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW | subprocess.IDLE_PRIORITY_CLASS
+
+# 서버 프로세스용: 콘솔 창만 숨기고 우선순위는 정상 유지(실시간 API 응답 지연 방지)
+SERVER_FLAGS = subprocess.CREATE_NO_WINDOW | subprocess.NORMAL_PRIORITY_CLASS
+
+# SetPriorityClass 전용 값 — CreateProcess의 creationflags로는 설정 불가, 프로세스 시작 후
+# 핸들에 별도로 적용해야 함. CPU뿐 아니라 디스크 I/O·메모리 우선순위까지 백그라운드 수준으로 낮춤
+PROCESS_SET_INFORMATION       = 0x0200
+PROCESS_MODE_BACKGROUND_BEGIN = 0x00100000
+
+
+def _set_background_io(pid: int) -> None:
+    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_SET_INFORMATION, False, pid)
+    if not handle:
+        return
+    try:
+        ctypes.windll.kernel32.SetPriorityClass(handle, PROCESS_MODE_BACKGROUND_BEGIN)
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
 
 
 logging.basicConfig(
@@ -60,7 +95,9 @@ def run(cmd: list, cwd: Path, label: str, dry_run: bool = False) -> None:
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        creationflags=SUBPROCESS_FLAGS,
     )
+    _set_background_io(proc.pid)
     for line in proc.stdout:
         log.info("[%s] %s", label, line.rstrip())
     proc.wait()
@@ -69,6 +106,46 @@ def run(cmd: list, cwd: Path, label: str, dry_run: bool = False) -> None:
         log.error("%s 실패 (exit=%d, %.0fs)", label, proc.returncode, elapsed)
         sys.exit(proc.returncode)
     log.info("%s 완료 (%.0fs)", label, elapsed)
+
+
+# 섹터/BPS 분할 수집 하루 한도 — 둘을 합쳐 하루 ~5,000회 DART 호출 이내로 유지
+# (sector 1건=1회 호출, bps 1건=2회 호출). DART burst 차단이 풀린 뒤부터 자동으로 진행되며
+# skip 로직 덕분에 다 채워지면 자동으로 "남은 작업 없음"이 되어 멈춤 (2026-06-22)
+SECTOR_DAILY_MAX_JOBS = 1500   # 1500회 호출/일
+BPS_DAILY_MAX_JOBS = 1750      # 3500회 호출/일
+
+def run_optional(cmd: list, cwd: Path, label: str, dry_run: bool = False) -> None:
+    """run()과 동일하나 실패해도 파이프라인을 막지 않음 — 섹터/BPS 분할 수집처럼 DART 한도에
+    걸려도 다음날 또 시도하면 되는 비치명적 보조 작업용 (2026-06-22)."""
+    full_cmd = [str(PYTHON)] + [str(c) for c in cmd]
+    log.info("[실행] %s", " ".join(full_cmd))
+    if dry_run:
+        log.info("[DRY-RUN] 건너뜀")
+        return
+    t0 = time.time()
+    try:
+        proc = subprocess.Popen(
+            full_cmd,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=SUBPROCESS_FLAGS,
+        )
+        _set_background_io(proc.pid)
+        for line in proc.stdout:
+            log.info("[%s] %s", label, line.rstrip())
+        proc.wait()
+        elapsed = time.time() - t0
+        if proc.returncode != 0:
+            log.warning("%s 실패했지만 비치명적 — 계속 진행 (exit=%d, %.0fs)", label, proc.returncode, elapsed)
+        else:
+            log.info("%s 완료 (%.0fs)", label, elapsed)
+    except Exception as exc:
+        log.warning("%s 실행 중 오류(비치명적): %s", label, exc)
 
 
 SERVER_PORT = 8001
@@ -83,6 +160,7 @@ def kill_port(port: int) -> None:
             "Write-Output 'Killed'}",
         ],
         capture_output=True,
+        creationflags=SUBPROCESS_FLAGS,
     )
     time.sleep(2)
 
@@ -101,7 +179,7 @@ def restart_server(dry_run: bool = False) -> None:
         cwd=str(SRV_DIR),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | SERVER_FLAGS,
     )
 
     for attempt in range(15):
@@ -120,6 +198,34 @@ def is_weekday() -> bool:
     return datetime.now().weekday() < 5
 
 
+def _is_pid_alive(pid: int) -> bool:
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True, text=True,
+        )
+        return str(pid) in result.stdout
+    except Exception:
+        return False
+
+
+def acquire_lock() -> bool:
+    """이미 실행 중인 다른 daily_pipeline.py(.bat이든 API든)가 있으면 False."""
+    if LOCK_FILE.exists():
+        try:
+            pid = int(LOCK_FILE.read_text().strip())
+            if _is_pid_alive(pid):
+                return False
+        except Exception:
+            pass
+    LOCK_FILE.write_text(str(os.getpid()))
+    return True
+
+
+def release_lock() -> None:
+    LOCK_FILE.unlink(missing_ok=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="일일 증분 파이프라인")
     parser.add_argument("--dry-run", action="store_true", help="실행 없이 단계만 출력")
@@ -127,45 +233,127 @@ def main() -> None:
         "--force-weekend", action="store_true",
         help="주말에도 강제 실행 (테스트용)"
     )
+    parser.add_argument(
+        "--no-server-restart", action="store_true",
+        help="3단계 서버 재시작을 건너뜀 — POST /api/update(인앱 버튼)처럼 이 파이프라인을 "
+             "호출한 서버 프로세스 자신이 살아있어야 할 때 사용. 호출 측이 완료 후 "
+             "_reload_model_and_cache()로 인프로세스 핫리로드를 직접 처리해야 함."
+    )
     args = parser.parse_args()
 
     if not is_weekday() and not args.force_weekend:
         log.info("주말 — 일일 파이프라인 스킵 (--force-weekend 로 강제 실행 가능)")
         return
 
-    today = date.today().strftime("%Y%m%d")
-    log.info("")
-    log.info("=== 일일 증분 파이프라인 시작: %s ===", today)
-    if args.dry_run:
-        log.info("[DRY-RUN 모드]")
+    if not acquire_lock():
+        log.warning("다른 daily_pipeline.py 실행이 이미 진행 중(.bat 또는 인앱 버튼) — 종료")
+        sys.exit(1)
 
-    # 1. 오늘치 데이터만 증분 수집 (INSERT OR IGNORE — 중복 안전)
-    _sep("1단계: 오늘치 데이터 증분 수집")
-    run(["collector.py"], cwd=DATA_DIR, label="수집", dry_run=args.dry_run)
+    try:
+        today = date.today().strftime("%Y%m%d")
+        log.info("")
+        log.info("=== 일일 증분 파이프라인 시작: %s ===", today)
+        if args.dry_run:
+            log.info("[DRY-RUN 모드]")
 
-    # 2. 마지막 피처 날짜 이후만 피처 계산 (자동 증분)
-    _sep("2단계: 피처 증분 업데이트")
-    run(["pipeline.py"], cwd=FEAT_DIR, label="피처", dry_run=args.dry_run)
+        # 1. 오늘치 데이터만 증분 수집 (INSERT OR IGNORE — 중복 안전)
+        _sep("1단계: 오늘치 데이터 증분 수집")
+        run(["collector.py"], cwd=DATA_DIR, label="수집", dry_run=args.dry_run)
 
-    # 3. 서버 재시작 (새 피처 반영 + lifespan에서 record_recommendations 자동 호출)
-    restart_server(dry_run=args.dry_run)
+        # 1-b. 지수 일봉 증분 수집 (market_index — 모의투자 거래일 계산에 필요)
+        run(["index_collector.py"], cwd=DATA_DIR, label="지수수집", dry_run=args.dry_run)
 
-    # 4. 모의투자 만기 거래 청산 (lifespan 실패 시 보험)
-    _sep("4단계: 모의투자 만기 거래 청산")
-    if args.dry_run:
-        log.info("[DRY-RUN] close_expired_trades(%s) 건너뜀", today)
-    else:
-        try:
-            sys.path.insert(0, str(SRV_DIR))
-            from paper_trader import close_expired_trades  # type: ignore[import]
-            result = close_expired_trades(today)
-            log.info("청산 완료: closed=%d expired=%d", result["closed"], result["expired"])
-        except Exception as exc:
-            log.error("모의투자 청산 오류 (비치명적): %s", exc)
+        # 2. 마지막 피처 날짜 이후만 피처 계산 (자동 증분)
+        _sep("2단계: 피처 증분 업데이트")
+        run(["pipeline.py"], cwd=FEAT_DIR, label="피처", dry_run=args.dry_run)
 
-    log.info("")
-    log.info("=== 일일 파이프라인 완료: %s ===", today)
-    log.info("로그: %s", LOG_FILE)
+        # 3. 서버 재시작 (새 피처 반영 + lifespan에서 record_recommendations 자동 호출)
+        # --no-server-restart면 건너뜀 — 호출한 서버 프로세스 본인이 죽으면 안 되므로
+        # (예: 인앱 "데이터 업데이트" 버튼). 그 경우 호출 측이 핫리로드를 직접 처리.
+        if args.no_server_restart:
+            _sep("3단계: 서버 재시작 (건너뜀, 호출 측이 인프로세스 핫리로드 처리)")
+        else:
+            restart_server(dry_run=args.dry_run)
+
+        # 4. 모의투자 만기 거래 청산 (lifespan 실패 시 보험)
+        _sep("4단계: 모의투자 만기 거래 청산")
+        if args.dry_run:
+            log.info("[DRY-RUN] close_expired_trades(%s) 건너뜀", today)
+        else:
+            try:
+                sys.path.insert(0, str(SRV_DIR))
+                from paper_trader import close_expired_trades  # type: ignore[import]
+                result = close_expired_trades(today)
+                log.info("청산 완료: closed=%d expired=%d", result["closed"], result["expired"])
+            except Exception as exc:
+                log.error("모의투자 청산 오류 (비치명적): %s", exc)
+
+        # 5. 31.9% 재분석 준비 상태 체크 (model_version 기록 거래가 충분히 쌓이면 1회 자동 분석)
+        _sep("5단계: 재분석 준비 상태 체크")
+        run(["check_reanalysis_ready.py"], cwd=SCRIPTS_DIR, label="재분석체크", dry_run=args.dry_run)
+
+        # 6. 섹터/BPS 분할 수집 — 하루 한도 내에서 조금씩, skip 로직으로 다 채워지면 자동 중단
+        # (DART burst 차단 중이면 실패해도 비치명적 — run_optional이 파이프라인을 막지 않음)
+        _sep("6단계: 섹터/BPS 분할 수집")
+        run_optional(
+            ["sector_collector.py", "--max-jobs", str(SECTOR_DAILY_MAX_JOBS)],
+            cwd=DATA_DIR, label="섹터분할수집", dry_run=args.dry_run,
+        )
+        run_optional(
+            ["bps_collector.py", "--max-jobs", str(BPS_DAILY_MAX_JOBS)],
+            cwd=DATA_DIR, label="BPS분할수집", dry_run=args.dry_run,
+        )
+
+        # 7. 가격 데이터 정합성 점검 — 전일 대비 2.5배+ 비율 이상 감지 시 pykrx 전체
+        # 재조회로 비교해서 진짜 스케일 버그(분할 미반영 등)면 자동 수정, 진짜 시세
+        # 변동이면 보존 (2026-06-24, 백필↔증분 경계 버그 91건 사후 예방 루틴)
+        _sep("7단계: 가격 데이터 정합성 점검")
+        run_optional(
+            ["price_integrity_check.py"],
+            cwd=DATA_DIR, label="정합성점검", dry_run=args.dry_run,
+        )
+
+        # 8. 배당 분할/병합 보정계수 증분 갱신 — 가격×배당 비율로 새 분할/병합 의심 종목을
+        # 가볍게 재탐지(DART 호출 없음)한 뒤, 달라진 것만 DART로 최소 확증 (2026-06-26,
+        # "고배당 point-in-time 분할비율 보정" 재발방지 — 7단계와 같은 결의 자동 점검)
+        _sep("8단계: 배당 분할/병합 보정계수 갱신")
+        run_optional(
+            ["dividend_split_correction_update.py"],
+            cwd=ML_DIR, label="배당분할보정갱신", dry_run=args.dry_run,
+        )
+
+        # 9. KIS(한국투자증권) Open API로 종목별 투자자매매동향(개인/외국인/기관계) 일별 수집
+        # — 이 API는 호출 시점 기준 최근 ~30거래일 롤링 윈도우만 주므로 매일 누적해야
+        # 끊김 없이 쌓임 (2026-06-27, 연기금은 종목 단위로 분리 안 됨 — CLAUDE.md 참고)
+        _sep("9단계: KIS 투자자매매동향(외국인/기관) 수집")
+        run_optional(
+            ["kis_investor_collector.py"],
+            cwd=DATA_DIR, label="KIS투자자수집", dry_run=args.dry_run,
+        )
+
+        # 10. 예측 이력 기록 + 만기 실현 결과 계산 (append-only, 수정 금지)
+        # — 서버 재시작(3단계) 이후 실행해야 최신 모델로 예측 가능
+        # — run_optional: 서버 미기동이나 모델 미로드 시에도 파이프라인 전체를 막지 않음
+        _sep("10단계: 예측 이력 기록 + 만기 실측")
+        run_optional(
+            ["prediction_logger.py"],
+            cwd=SRV_DIR, label="예측이력", dry_run=args.dry_run,
+        )
+
+        # 11. 파이프라인 무결성 체크 — 위반 시 exit 1로 조용한 성공 차단
+        # (prices 최신일 공백, 행수 이상 소실, 핵심 피처 결측률 급증)
+        # run_optional: 체크 실패 자체가 운영을 막으면 안 됨 — 로그로만 경보
+        _sep("11단계: 파이프라인 무결성 체크")
+        run_optional(
+            ["pipeline_integrity_check.py"],
+            cwd=SCRIPTS_DIR, label="무결성체크", dry_run=args.dry_run,
+        )
+
+        log.info("")
+        log.info("=== 일일 파이프라인 완료: %s ===", today)
+        log.info("로그: %s", LOG_FILE)
+    finally:
+        release_lock()
 
 
 if __name__ == "__main__":

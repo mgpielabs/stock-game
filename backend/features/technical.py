@@ -153,6 +153,42 @@ def calc_patterns(open_: pd.Series, high: pd.Series, low: pd.Series, close: pd.S
     })
 
 
+# ── 시계열 lag 피처 ──────────────────────────────────────────
+
+def calc_lag_features(close: pd.Series, volume: pd.Series) -> pd.DataFrame:
+    """수익률 lag, 거래량 비율 lag, 추세 일관성, 변동성, 가격 위치"""
+    ret_1d = close.pct_change(1)
+    vol_ma20 = volume.rolling(20, min_periods=1).mean()
+    vol_ratio_raw = volume / vol_ma20.replace(0, np.nan)
+    daily_up = (close > close.shift(1)).astype(float)
+
+    feats: dict = {}
+
+    # 수익률 lag (N일 전 일간 수익률)
+    for lag in [1, 2, 3, 5, 10]:
+        feats[f"ret_lag_{lag}"] = ret_1d.shift(lag)
+
+    # 거래량 비율 lag
+    for lag in [1, 3, 5]:
+        feats[f"vol_ratio_lag_{lag}"] = vol_ratio_raw.shift(lag)
+
+    # 추세 일관성
+    feats["up_days_5"]  = daily_up.rolling(5,  min_periods=1).sum()
+    feats["up_days_10"] = daily_up.rolling(10, min_periods=1).sum()
+
+    # 변동성
+    feats["volatility_5"]  = ret_1d.rolling(5,  min_periods=2).std()
+    feats["volatility_20"] = ret_1d.rolling(20, min_periods=5).std()
+
+    # 가격 위치
+    for n in [20, 60]:
+        lo = close.rolling(n, min_periods=1).min()
+        hi = close.rolling(n, min_periods=1).max()
+        feats[f"price_position_{n}"] = (close - lo) / (hi - lo).replace(0, np.nan)
+
+    return pd.DataFrame(feats, index=close.index)
+
+
 # ── 타겟 ─────────────────────────────────────────────────────
 
 def calc_target(close: pd.Series) -> pd.Series:
@@ -190,6 +226,7 @@ def compute_all_technical(df: pd.DataFrame) -> pd.DataFrame:
         calc_volume_ratios(volume),
         calc_atr(high, low, close),
         calc_patterns(open_, high, low, close),
+        calc_lag_features(close, volume),
         calc_target(close).rename("target"),
     ]
 

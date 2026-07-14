@@ -1,0 +1,33 @@
+{
+  "①_close_metrics": {
+    "win_rate_pct": 45.2016129032258,
+    "hit5_rate_pct": 32.903225806451616,
+    "avg_ret_pct": 2.507452254679316,
+    "n_days": 248
+  },
+  "②_close_metrics": {
+    "win_rate_pct": 46.62698412698413,
+    "hit5_rate_pct": 31.70634920634921,
+    "avg_ret_pct": 0.9720590099136464,
+    "n_days": 252
+  },
+  "win_rate_diff": 1.43,
+  "pval_win": 0.2824,
+  "intersect": {
+    "n": 899,
+    "win_pct": 46.162402669632925,
+    "avg_ret_pct": 1.5465515568946975
+  },
+  "only_1": {
+    "n": 1581,
+    "win_pct": 44.65528146742568,
+    "avg_ret_pct": 3.0538467691058635
+  },
+  "only_2": {
+    "n": 1581,
+    "win_pct": 46.5528146742568,
+    "avg_ret_pct": 0.4827767048225223
+  },
+  "verdict": "동등_유지",
+  "elapsed_min": 7.2
+}

@@ -1,0 +1,7 @@
+variant,feature,rank,pct_of_total_shap
+A_baseline_legacy,pbr,3,9.746685078752716
+A_baseline_legacy,per,44,0.0
+B_pit_fix_only,pbr,43,0.0
+B_pit_fix_only,per,42,0.0
+C_pit_fix_plus_dead_rm,pbr,47,0.0
+C_pit_fix_plus_dead_rm,per,39,0.06896726765094205

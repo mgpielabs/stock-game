@@ -11,12 +11,22 @@ KOSPI + KOSDAQ 전종목 데이터 수집기
 """
 
 import re
+import sys
 import time
+import socket
 import logging
 import argparse
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Dict
+
+# daily_pipeline.py가 자식 프로세스 stdout을 UTF-8로 디코딩하므로(run() 참고) 맞춰줌 —
+# 콘솔이 cp949인 환경(수동 실행 .bat 등)에서 안 맞추면 UnicodeEncodeError 스팸 발생(2026-06-23)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+# pykrx 내부 HTTP 요청에 소켓 타임아웃 적용 (무한 대기 방지)
+socket.setdefaulttimeout(25)
 
 import requests
 import pandas as pd
@@ -38,17 +48,17 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),  # 기본값(stderr)은 위 reconfigure 효과를 못 받음
         logging.FileHandler("collector.log", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
 
 # ── 상수 ─────────────────────────────────────────────────────
-DEFAULT_YEARS  = 3
+DEFAULT_YEARS  = 5
 API_DELAY      = 0.3     # 요청 간격(초)
 MAX_RETRY      = 3
-THREAD_WORKERS = 8       # 병렬 종목 수집 쓰레드
+THREAD_WORKERS = 16      # 병렬 종목 수집 쓰레드 (I/O bound → 높여도 무방)
 
 NAVER_M_HEADERS = {
     "User-Agent": (
@@ -205,14 +215,48 @@ def collect_tickers() -> List[Dict]:
 
 
 # ── Step 2: OHLCV 수집 ───────────────────────────────────────
-def _collect_ohlcv_for_symbol(symbol: str, start: str, end: str) -> List[Dict]:
-    """pykrx get_market_ohlcv_by_date 로 단일 종목 OHLCV 수집"""
+
+# ── pykrx 타임아웃 래퍼 (multiprocessing — 스레드와 달리 진짜 kill 가능) ──
+import multiprocessing as _mp
+
+def _pykrx_worker(q: _mp.Queue, start: str, end: str, symbol: str) -> None:
+    """별도 프로세스에서 pykrx 호출 — 부모가 kill()로 강제 종료 가능"""
     try:
-        df: pd.DataFrame = _retry(
-            krx.get_market_ohlcv_by_date,
-            start, end, symbol,
-            delay=0.1,
-        )
+        from pykrx import stock as _krx
+        df = _krx.get_market_ohlcv_by_date(start, end, symbol)
+        q.put(df)
+    except Exception:
+        q.put(None)
+
+
+def _pykrx_with_timeout(start: str, end: str, symbol: str, timeout: int = 20):
+    """pykrx 호출을 별도 프로세스에서 실행, timeout 초 내 응답 없으면 강제 종료"""
+    ctx = _mp.get_context("spawn")
+    q   = ctx.Queue()
+    p   = ctx.Process(target=_pykrx_worker, args=(q, start, end, symbol), daemon=True)
+    p.start()
+    p.join(timeout=timeout)
+    if p.is_alive():
+        logger.debug("OHLCV 타임아웃 [%s] — 프로세스 강제 종료", symbol)
+        p.kill()
+        p.join()
+        return None
+    return q.get() if not q.empty() else None
+
+
+def _collect_ohlcv_for_symbol(symbol: str, start: str, end: str) -> List[Dict]:
+    """pykrx get_market_ohlcv_by_date 로 단일 종목 OHLCV 수집 (증분: 최신 저장일 이후만 fetch)"""
+    latest = get_latest_date(symbol)
+    if latest:
+        end_dt    = datetime.strptime(end,    "%Y%m%d")
+        latest_dt = datetime.strptime(latest, "%Y%m%d")
+        if latest_dt >= end_dt:
+            return []
+        # 건너뛰지 않고 항상 마지막 저장일 다음날부터 fetch
+        start = (latest_dt + timedelta(days=1)).strftime("%Y%m%d")
+
+    try:
+        df = _pykrx_with_timeout(start, end, symbol, timeout=20)
         if df is None or df.empty:
             return []
 
@@ -236,9 +280,10 @@ def _collect_ohlcv_for_symbol(symbol: str, start: str, end: str) -> List[Dict]:
 
 
 def collect_prices(symbols: List[Dict], start: str, end: str):
-    """전종목 OHLCV 병렬 수집"""
+    """전종목 OHLCV 병렬 수집 (증분: 이미 최신인 종목은 API 호출 생략)"""
     logger.info("▶ OHLCV 수집: %s ~ %s (%d개 종목)", start, end, len(symbols))
 
+    skipped = fetched = 0
     with ThreadPoolExecutor(max_workers=THREAD_WORKERS) as pool:
         futures = {
             pool.submit(_collect_ohlcv_for_symbol, s["symbol"], start, end): s["symbol"]
@@ -255,8 +300,13 @@ def collect_prices(symbols: List[Dict], start: str, end: str):
                 records = future.result()
                 if records:
                     insert_prices(records)
+                    fetched += 1
+                else:
+                    skipped += 1
             except Exception as exc:
                 logger.error("OHLCV 저장 오류 [%s]: %s", sym, exc)
+
+    logger.info("OHLCV 완료: 신규/업데이트=%d, 이미최신(스킵)=%d", fetched, skipped)
 
 
 # ── Step 3: 시총 + PER/PBR + 외국인비율 ──────────────────────
@@ -377,7 +427,17 @@ def main():
     parser.add_argument("--init-only", action="store_true", help="DB 초기화만 하고 종료")
     parser.add_argument("--tickers-only", action="store_true", help="종목 마스터만 갱신")
     parser.add_argument("--ohlcv-only",   action="store_true", help="OHLCV만 수집")
+    parser.add_argument(
+        "--workers", type=int, default=None,
+        help="병렬 수집 스레드 수 (기본 16). 전체 재학습처럼 장기간 전종목 수집 시 "
+             "낮춰서(예: 6) 대역폭 점유를 줄일 수 있음 — 일일 증분 수집은 기본값 유지 권장",
+    )
     args = parser.parse_args()
+
+    if args.workers is not None:
+        global THREAD_WORKERS
+        THREAD_WORKERS = max(1, args.workers)
+        logger.info("병렬 스레드 수 재설정: %d", THREAD_WORKERS)
 
     if args.init_only:
         init_db()

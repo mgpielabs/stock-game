@@ -1,0 +1,2266 @@
+[
+  {
+    "symbol": "096960",
+    "action_type": "bonus_issue",
+    "record_date": "20260703",
+    "list_date": "",
+    "K_raw": 5.0,
+    "detail": "fix_rate=400.0"
+  },
+  {
+    "symbol": "000500",
+    "action_type": "bonus_issue",
+    "record_date": "20260701",
+    "list_date": "",
+    "K_raw": 1.8,
+    "detail": "fix_rate=80.0"
+  },
+  {
+    "symbol": "476830",
+    "action_type": "bonus_issue",
+    "record_date": "20260630",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "484870",
+    "action_type": "bonus_issue",
+    "record_date": "20260629",
+    "list_date": "",
+    "K_raw": 3.0,
+    "detail": "fix_rate=200.0"
+  },
+  {
+    "symbol": "0048G0",
+    "action_type": "bonus_issue",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 30.0,
+    "detail": "fix_rate=2900.0"
+  },
+  {
+    "symbol": "368970",
+    "action_type": "bonus_issue",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 1.5,
+    "detail": "fix_rate=50.0"
+  },
+  {
+    "symbol": "462350",
+    "action_type": "bonus_issue",
+    "record_date": "20260619",
+    "list_date": "",
+    "K_raw": 1.2,
+    "detail": "fix_rate=20.0"
+  },
+  {
+    "symbol": "46235A",
+    "action_type": "bonus_issue",
+    "record_date": "20260619",
+    "list_date": "",
+    "K_raw": 1.2,
+    "detail": "fix_rate=20.0"
+  },
+  {
+    "symbol": "018620",
+    "action_type": "bonus_issue",
+    "record_date": "20260615",
+    "list_date": "20260706",
+    "K_raw": 1.2,
+    "detail": "fix_rate=20.0"
+  },
+  {
+    "symbol": "068270",
+    "action_type": "bonus_issue",
+    "record_date": "20260605",
+    "list_date": "20260630",
+    "K_raw": 1.05,
+    "detail": "fix_rate=5.0"
+  },
+  {
+    "symbol": "309930",
+    "action_type": "bonus_issue",
+    "record_date": "20260528",
+    "list_date": "20260622",
+    "K_raw": 4.0,
+    "detail": "fix_rate=300.0"
+  },
+  {
+    "symbol": "183300",
+    "action_type": "bonus_issue",
+    "record_date": "20260527",
+    "list_date": "20260615",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "129130",
+    "action_type": "bonus_issue",
+    "record_date": "20260526",
+    "list_date": "",
+    "K_raw": 1.0029,
+    "detail": "fix_rate=0.29"
+  },
+  {
+    "symbol": "266270",
+    "action_type": "bonus_issue",
+    "record_date": "20260515",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "fix_rate=900.0"
+  },
+  {
+    "symbol": "314710",
+    "action_type": "bonus_issue",
+    "record_date": "20260512",
+    "list_date": "",
+    "K_raw": 6.0,
+    "detail": "fix_rate=500.0"
+  },
+  {
+    "symbol": "083030",
+    "action_type": "bonus_issue",
+    "record_date": "20260511",
+    "list_date": "",
+    "K_raw": 4.0,
+    "detail": "fix_rate=300.0"
+  },
+  {
+    "symbol": "0158J0",
+    "action_type": "bonus_issue",
+    "record_date": "20260508",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "328130",
+    "action_type": "bonus_issue",
+    "record_date": "20260506",
+    "list_date": "20260526",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "187870",
+    "action_type": "bonus_issue",
+    "record_date": "20260429",
+    "list_date": "20260522",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "497430",
+    "action_type": "bonus_issue",
+    "record_date": "20260423",
+    "list_date": "",
+    "K_raw": 4.0,
+    "detail": "fix_rate=300.0"
+  },
+  {
+    "symbol": "463540",
+    "action_type": "bonus_issue",
+    "record_date": "20260420",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "fix_rate=900.0"
+  },
+  {
+    "symbol": "0159M0",
+    "action_type": "bonus_issue",
+    "record_date": "20260415",
+    "list_date": "",
+    "K_raw": 2.5,
+    "detail": "fix_rate=150.0"
+  },
+  {
+    "symbol": "020400",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "20260507",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "399820",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "39982K",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "39982L",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "39982M",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "39982N",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "39982P",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "39982Q",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "39982R",
+    "action_type": "bonus_issue",
+    "record_date": "20260413",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "0053F0",
+    "action_type": "bonus_issue",
+    "record_date": "20260410",
+    "list_date": "",
+    "K_raw": 7.0,
+    "detail": "fix_rate=600.0"
+  },
+  {
+    "symbol": "0053FK",
+    "action_type": "bonus_issue",
+    "record_date": "20260410",
+    "list_date": "",
+    "K_raw": 7.0,
+    "detail": "fix_rate=600.0"
+  },
+  {
+    "symbol": "0053FL",
+    "action_type": "bonus_issue",
+    "record_date": "20260410",
+    "list_date": "",
+    "K_raw": 7.0,
+    "detail": "fix_rate=600.0"
+  },
+  {
+    "symbol": "277400",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740A",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740K",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740L",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740M",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740P",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740Q",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740R",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740S",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740T",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740V",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740W",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740X",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740Y",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "27740Z",
+    "action_type": "bonus_issue",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 50.0,
+    "detail": "fix_rate=4900.0"
+  },
+  {
+    "symbol": "0119W0",
+    "action_type": "bonus_issue",
+    "record_date": "20260331",
+    "list_date": "",
+    "K_raw": 4.0,
+    "detail": "fix_rate=300.0"
+  },
+  {
+    "symbol": "0119WK",
+    "action_type": "bonus_issue",
+    "record_date": "20260331",
+    "list_date": "",
+    "K_raw": 4.0,
+    "detail": "fix_rate=300.0"
+  },
+  {
+    "symbol": "0147B0",
+    "action_type": "bonus_issue",
+    "record_date": "20260325",
+    "list_date": "",
+    "K_raw": 11.0,
+    "detail": "fix_rate=1000.0"
+  },
+  {
+    "symbol": "0147BK",
+    "action_type": "bonus_issue",
+    "record_date": "20260325",
+    "list_date": "",
+    "K_raw": 11.0,
+    "detail": "fix_rate=1000.0"
+  },
+  {
+    "symbol": "0147BL",
+    "action_type": "bonus_issue",
+    "record_date": "20260325",
+    "list_date": "",
+    "K_raw": 11.0,
+    "detail": "fix_rate=1000.0"
+  },
+  {
+    "symbol": "0147BM",
+    "action_type": "bonus_issue",
+    "record_date": "20260325",
+    "list_date": "",
+    "K_raw": 11.0,
+    "detail": "fix_rate=1000.0"
+  },
+  {
+    "symbol": "0147BN",
+    "action_type": "bonus_issue",
+    "record_date": "20260325",
+    "list_date": "",
+    "K_raw": 11.0,
+    "detail": "fix_rate=1000.0"
+  },
+  {
+    "symbol": "062970",
+    "action_type": "bonus_issue",
+    "record_date": "20260325",
+    "list_date": "20260414",
+    "K_raw": 1.5,
+    "detail": "fix_rate=50.0"
+  },
+  {
+    "symbol": "458870",
+    "action_type": "bonus_issue",
+    "record_date": "20260325",
+    "list_date": "20260413",
+    "K_raw": 3.0,
+    "detail": "fix_rate=200.0"
+  },
+  {
+    "symbol": "032540",
+    "action_type": "bonus_issue",
+    "record_date": "20260323",
+    "list_date": "20260415",
+    "K_raw": 1.5,
+    "detail": "fix_rate=50.0"
+  },
+  {
+    "symbol": "350530",
+    "action_type": "bonus_issue",
+    "record_date": "20260316",
+    "list_date": "",
+    "K_raw": 1.4,
+    "detail": "fix_rate=40.0"
+  },
+  {
+    "symbol": "115450",
+    "action_type": "bonus_issue",
+    "record_date": "20260313",
+    "list_date": "20260406",
+    "K_raw": 1.05,
+    "detail": "fix_rate=5.0"
+  },
+  {
+    "symbol": "219730",
+    "action_type": "bonus_issue",
+    "record_date": "20260312",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "163280",
+    "action_type": "bonus_issue",
+    "record_date": "20260310",
+    "list_date": "20260331",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "300120",
+    "action_type": "bonus_issue",
+    "record_date": "20260303",
+    "list_date": "20260324",
+    "K_raw": 1.4,
+    "detail": "fix_rate=40.0"
+  },
+  {
+    "symbol": "480370",
+    "action_type": "bonus_issue",
+    "record_date": "20260303",
+    "list_date": "20260327",
+    "K_raw": 3.0,
+    "detail": "fix_rate=200.0"
+  },
+  {
+    "symbol": "151780",
+    "action_type": "bonus_issue",
+    "record_date": "20260226",
+    "list_date": "",
+    "K_raw": 4.0,
+    "detail": "fix_rate=300.0"
+  },
+  {
+    "symbol": "482630",
+    "action_type": "bonus_issue",
+    "record_date": "20260223",
+    "list_date": "20260323",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "373170",
+    "action_type": "bonus_issue",
+    "record_date": "20260210",
+    "list_date": "20260304",
+    "K_raw": 3.0,
+    "detail": "fix_rate=200.0"
+  },
+  {
+    "symbol": "059120",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "20260213",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "483350",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "48335K",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "48335L",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "48335M",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "48335N",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "48335P",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "48335Q",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "48335R",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "48335S",
+    "action_type": "bonus_issue",
+    "record_date": "20260129",
+    "list_date": "",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "340930",
+    "action_type": "bonus_issue",
+    "record_date": "20260108",
+    "list_date": "20260129",
+    "K_raw": 1.3,
+    "detail": "fix_rate=30.0"
+  },
+  {
+    "symbol": "406820",
+    "action_type": "bonus_issue",
+    "record_date": "20260108",
+    "list_date": "20260130",
+    "K_raw": 4.0,
+    "detail": "fix_rate=300.0"
+  },
+  {
+    "symbol": "084010",
+    "action_type": "bonus_issue",
+    "record_date": "20260106",
+    "list_date": "20260126",
+    "K_raw": 1.6617000000000002,
+    "detail": "fix_rate=66.17"
+  },
+  {
+    "symbol": "472850",
+    "action_type": "bonus_issue",
+    "record_date": "20260105",
+    "list_date": "20260119",
+    "K_raw": 1.7802,
+    "detail": "fix_rate=78.02"
+  },
+  {
+    "symbol": "067290",
+    "action_type": "bonus_issue",
+    "record_date": "20260102",
+    "list_date": "20260121",
+    "K_raw": 1.05,
+    "detail": "fix_rate=5.0"
+  },
+  {
+    "symbol": "417840",
+    "action_type": "bonus_issue",
+    "record_date": "20260102",
+    "list_date": "20260123",
+    "K_raw": 3.0,
+    "detail": "fix_rate=200.0"
+  },
+  {
+    "symbol": "025320",
+    "action_type": "bonus_issue",
+    "record_date": "20260101",
+    "list_date": "20260128",
+    "K_raw": 1.05,
+    "detail": "fix_rate=5.0"
+  },
+  {
+    "symbol": "099750",
+    "action_type": "bonus_issue",
+    "record_date": "20251219",
+    "list_date": "20260108",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "444690",
+    "action_type": "bonus_issue",
+    "record_date": "20251219",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "fix_rate=900.0"
+  },
+  {
+    "symbol": "44469K",
+    "action_type": "bonus_issue",
+    "record_date": "20251219",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "fix_rate=900.0"
+  },
+  {
+    "symbol": "44469L",
+    "action_type": "bonus_issue",
+    "record_date": "20251219",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "fix_rate=900.0"
+  },
+  {
+    "symbol": "082920",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "20251230",
+    "K_raw": 2.0,
+    "detail": "fix_rate=100.0"
+  },
+  {
+    "symbol": "386380",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638K",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638L",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638M",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638N",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638P",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638Q",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638R",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638S",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "38638T",
+    "action_type": "bonus_issue",
+    "record_date": "20251211",
+    "list_date": "",
+    "K_raw": 39.0,
+    "detail": "fix_rate=3800.0"
+  },
+  {
+    "symbol": "000040",
+    "action_type": "rev_split",
+    "record_date": "20260706",
+    "list_date": "",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "001520",
+    "action_type": "rev_split",
+    "record_date": "20260706",
+    "list_date": "",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "001525",
+    "action_type": "rev_split",
+    "record_date": "20260706",
+    "list_date": "",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "001527",
+    "action_type": "rev_split",
+    "record_date": "20260706",
+    "list_date": "",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "001529",
+    "action_type": "rev_split",
+    "record_date": "20260706",
+    "list_date": "",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "00152A",
+    "action_type": "rev_split",
+    "record_date": "20260706",
+    "list_date": "",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "058400",
+    "action_type": "rev_split",
+    "record_date": "20260706",
+    "list_date": "",
+    "K_raw": 0.1,
+    "detail": "bf=500→af=5000"
+  },
+  {
+    "symbol": "113810",
+    "action_type": "rev_split",
+    "record_date": "20260706",
+    "list_date": "",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "250930",
+    "action_type": "rev_split",
+    "record_date": "20260701",
+    "list_date": "",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "446840",
+    "action_type": "rev_split",
+    "record_date": "20260629",
+    "list_date": "",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "006490",
+    "action_type": "rev_split",
+    "record_date": "20260628",
+    "list_date": "",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "032960",
+    "action_type": "rev_split",
+    "record_date": "20260625",
+    "list_date": "",
+    "K_raw": 5.0,
+    "detail": "bf=500→af=100"
+  },
+  {
+    "symbol": "277410",
+    "action_type": "rev_split",
+    "record_date": "20260623",
+    "list_date": "",
+    "K_raw": 0.1,
+    "detail": "bf=100→af=1000"
+  },
+  {
+    "symbol": "002680",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "060230",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "238540",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "23854K",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "23854L",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "23854M",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "23854N",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "23854P",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "23854Q",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "23854R",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "23854S",
+    "action_type": "rev_split",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "021880",
+    "action_type": "rev_split",
+    "record_date": "20260618",
+    "list_date": "",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "025440",
+    "action_type": "rev_split",
+    "record_date": "20260616",
+    "list_date": "2026/07/03",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "011330",
+    "action_type": "rev_split",
+    "record_date": "20260615",
+    "list_date": "2026/06/30",
+    "K_raw": 0.1,
+    "detail": "bf=500→af=5000"
+  },
+  {
+    "symbol": "012160",
+    "action_type": "rev_split",
+    "record_date": "20260615",
+    "list_date": "2026/06/29",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "096960",
+    "action_type": "rev_split",
+    "record_date": "20260613",
+    "list_date": "",
+    "K_raw": 5.0,
+    "detail": "bf=500→af=100"
+  },
+  {
+    "symbol": "033830",
+    "action_type": "rev_split",
+    "record_date": "20260611",
+    "list_date": "2026/07/03",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "049080",
+    "action_type": "rev_split",
+    "record_date": "20260611",
+    "list_date": "2026/06/29",
+    "K_raw": 0.1,
+    "detail": "bf=500→af=5000"
+  },
+  {
+    "symbol": "210120",
+    "action_type": "rev_split",
+    "record_date": "20260611",
+    "list_date": "",
+    "K_raw": 0.4,
+    "detail": "bf=200→af=500"
+  },
+  {
+    "symbol": "006740",
+    "action_type": "rev_split",
+    "record_date": "20260609",
+    "list_date": "2026/06/26",
+    "K_raw": 5.0,
+    "detail": "bf=500→af=100"
+  },
+  {
+    "symbol": "083030",
+    "action_type": "rev_split",
+    "record_date": "20260609",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "014990",
+    "action_type": "rev_split",
+    "record_date": "20260608",
+    "list_date": "2026/06/26",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "246690",
+    "action_type": "rev_split",
+    "record_date": "20260608",
+    "list_date": "2026/06/30",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "290660",
+    "action_type": "rev_split",
+    "record_date": "20260608",
+    "list_date": "2026/06/25",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "359090",
+    "action_type": "rev_split",
+    "record_date": "20260608",
+    "list_date": "2026/06/30",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "219750",
+    "action_type": "rev_split",
+    "record_date": "20260605",
+    "list_date": "2026/06/25",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "295110",
+    "action_type": "rev_split",
+    "record_date": "20260529",
+    "list_date": "",
+    "K_raw": 0.001,
+    "detail": "bf=500→af=500000"
+  },
+  {
+    "symbol": "002630",
+    "action_type": "rev_split",
+    "record_date": "20260521",
+    "list_date": "2026/06/09",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "035290",
+    "action_type": "rev_split",
+    "record_date": "20260514",
+    "list_date": "2026/05/29",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "097780",
+    "action_type": "rev_split",
+    "record_date": "20260513",
+    "list_date": "2026/06/16",
+    "K_raw": 2.0,
+    "detail": "bf=1000→af=500"
+  },
+  {
+    "symbol": "001230",
+    "action_type": "rev_split",
+    "record_date": "20260508",
+    "list_date": "2026/05/29",
+    "K_raw": 5.0,
+    "detail": "bf=2500→af=500"
+  },
+  {
+    "symbol": "043590",
+    "action_type": "rev_split",
+    "record_date": "20260508",
+    "list_date": "2026/05/22",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "329470",
+    "action_type": "rev_split",
+    "record_date": "20260508",
+    "list_date": "",
+    "K_raw": 5.0,
+    "detail": "bf=500→af=100"
+  },
+  {
+    "symbol": "32947K",
+    "action_type": "rev_split",
+    "record_date": "20260508",
+    "list_date": "",
+    "K_raw": 5.0,
+    "detail": "bf=500→af=100"
+  },
+  {
+    "symbol": "32947L",
+    "action_type": "rev_split",
+    "record_date": "20260508",
+    "list_date": "",
+    "K_raw": 5.0,
+    "detail": "bf=500→af=100"
+  },
+  {
+    "symbol": "032790",
+    "action_type": "rev_split",
+    "record_date": "20260507",
+    "list_date": "2026/05/27",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "309930",
+    "action_type": "rev_split",
+    "record_date": "20260507",
+    "list_date": "2026/05/27",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "016600",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/29",
+    "K_raw": 0.08,
+    "detail": "bf=200→af=2500"
+  },
+  {
+    "symbol": "032680",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/26",
+    "K_raw": 0.2,
+    "detail": "bf=200→af=1000"
+  },
+  {
+    "symbol": "032685",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/26",
+    "K_raw": 0.2,
+    "detail": "bf=200→af=1000"
+  },
+  {
+    "symbol": "032687",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/26",
+    "K_raw": 0.2,
+    "detail": "bf=200→af=1000"
+  },
+  {
+    "symbol": "052420",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/28",
+    "K_raw": 0.1,
+    "detail": "bf=500→af=5000"
+  },
+  {
+    "symbol": "061040",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/28",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "065650",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/06/09",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "066910",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/06/09",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "088290",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/28",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "104930",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "",
+    "K_raw": 10.0,
+    "detail": "bf=5000→af=500"
+  },
+  {
+    "symbol": "115530",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/26",
+    "K_raw": 0.1,
+    "detail": "bf=100→af=1000"
+  },
+  {
+    "symbol": "137940",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/27",
+    "K_raw": 0.1,
+    "detail": "bf=100→af=1000"
+  },
+  {
+    "symbol": "140430",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/28",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "184230",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/18",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "226340",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/27",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "227610",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/28",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "227950",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/28",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "258790",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/28",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "380540",
+    "action_type": "rev_split",
+    "record_date": "20260506",
+    "list_date": "2026/05/22",
+    "K_raw": 0.5,
+    "detail": "bf=100→af=200"
+  },
+  {
+    "symbol": "368970",
+    "action_type": "rev_split",
+    "record_date": "20260505",
+    "list_date": "2026/05/28",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "046390",
+    "action_type": "rev_split",
+    "record_date": "20260504",
+    "list_date": "2026/05/26",
+    "K_raw": 0.4,
+    "detail": "bf=200→af=500"
+  },
+  {
+    "symbol": "069460",
+    "action_type": "rev_split",
+    "record_date": "20260504",
+    "list_date": "2026/05/26",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "091970",
+    "action_type": "rev_split",
+    "record_date": "20260504",
+    "list_date": "2026/05/27",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "322780",
+    "action_type": "rev_split",
+    "record_date": "20260504",
+    "list_date": "2026/05/27",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "419540",
+    "action_type": "rev_split",
+    "record_date": "20260504",
+    "list_date": "2026/05/26",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "434850",
+    "action_type": "rev_split",
+    "record_date": "20260504",
+    "list_date": "",
+    "K_raw": 20.0,
+    "detail": "bf=10000→af=500"
+  },
+  {
+    "symbol": "023790",
+    "action_type": "rev_split",
+    "record_date": "20260501",
+    "list_date": "2026/05/26",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "043910",
+    "action_type": "rev_split",
+    "record_date": "20260501",
+    "list_date": "2026/05/20",
+    "K_raw": 0.1,
+    "detail": "bf=500→af=5000"
+  },
+  {
+    "symbol": "001020",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/28",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "027040",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/28",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "065150",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/27",
+    "K_raw": 0.1,
+    "detail": "bf=100→af=1000"
+  },
+  {
+    "symbol": "131760",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/22",
+    "K_raw": 0.2,
+    "detail": "bf=500→af=2500"
+  },
+  {
+    "symbol": "193250",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/22",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "198940",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/21",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "19894K",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/21",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "19894P",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/21",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "225590",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/21",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "234100",
+    "action_type": "rev_split",
+    "record_date": "20260430",
+    "list_date": "2026/05/26",
+    "K_raw": 0.2,
+    "detail": "bf=100→af=500"
+  },
+  {
+    "symbol": "002360",
+    "action_type": "rev_split",
+    "record_date": "20260429",
+    "list_date": "2026/05/22",
+    "K_raw": 0.1,
+    "detail": "bf=500→af=5000"
+  },
+  {
+    "symbol": "002365",
+    "action_type": "rev_split",
+    "record_date": "20260429",
+    "list_date": "2026/05/22",
+    "K_raw": 0.1,
+    "detail": "bf=500→af=5000"
+  },
+  {
+    "symbol": "005320",
+    "action_type": "rev_split",
+    "record_date": "20260429",
+    "list_date": "2026/05/20",
+    "K_raw": 0.5,
+    "detail": "bf=500→af=1000"
+  },
+  {
+    "symbol": "004870",
+    "action_type": "cap_dcrs",
+    "record_date": "20260703",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "348080",
+    "action_type": "cap_dcrs",
+    "record_date": "20260702",
+    "list_date": "",
+    "K_raw": 0.9989,
+    "detail": "rate=0.11(무상감자)"
+  },
+  {
+    "symbol": "079190",
+    "action_type": "cap_dcrs",
+    "record_date": "20260701",
+    "list_date": "",
+    "K_raw": 0.995,
+    "detail": "rate=0.5(무상감자)"
+  },
+  {
+    "symbol": "001470",
+    "action_type": "cap_dcrs",
+    "record_date": "20260630",
+    "list_date": "",
+    "K_raw": 0.9996,
+    "detail": "rate=0.04(무상감자)"
+  },
+  {
+    "symbol": "145210",
+    "action_type": "cap_dcrs",
+    "record_date": "20260630",
+    "list_date": "",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "007320",
+    "action_type": "cap_dcrs",
+    "record_date": "20260629",
+    "list_date": "",
+    "K_raw": 0.9933,
+    "detail": "rate=0.67(무상감자)"
+  },
+  {
+    "symbol": "410250",
+    "action_type": "cap_dcrs",
+    "record_date": "20260629",
+    "list_date": "",
+    "K_raw": 0.99,
+    "detail": "rate=1.0(유상감자)"
+  },
+  {
+    "symbol": "011000",
+    "action_type": "cap_dcrs",
+    "record_date": "20260628",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "354200",
+    "action_type": "cap_dcrs",
+    "record_date": "20260624",
+    "list_date": "",
+    "K_raw": 0.9967,
+    "detail": "rate=0.33(무상감자)"
+  },
+  {
+    "symbol": "009730",
+    "action_type": "cap_dcrs",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 0.9989,
+    "detail": "rate=0.11(무상감자)"
+  },
+  {
+    "symbol": "080720",
+    "action_type": "cap_dcrs",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 0.9967,
+    "detail": "rate=0.33(무상감자)"
+  },
+  {
+    "symbol": "268830",
+    "action_type": "cap_dcrs",
+    "record_date": "20260622",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "007720",
+    "action_type": "cap_dcrs",
+    "record_date": "20260618",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "019570",
+    "action_type": "cap_dcrs",
+    "record_date": "20260618",
+    "list_date": "",
+    "K_raw": 0.995,
+    "detail": "rate=0.5(무상감자)"
+  },
+  {
+    "symbol": "199260",
+    "action_type": "cap_dcrs",
+    "record_date": "20260618",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "19926L",
+    "action_type": "cap_dcrs",
+    "record_date": "20260618",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "19926Q",
+    "action_type": "cap_dcrs",
+    "record_date": "20260618",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "0043C0",
+    "action_type": "cap_dcrs",
+    "record_date": "20260616",
+    "list_date": "",
+    "K_raw": 0.9906,
+    "detail": "rate=0.94(유상감자)"
+  },
+  {
+    "symbol": "038880",
+    "action_type": "cap_dcrs",
+    "record_date": "20260611",
+    "list_date": "2026/06/26",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "208640",
+    "action_type": "cap_dcrs",
+    "record_date": "20260610",
+    "list_date": "2026/06/25",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "214330",
+    "action_type": "cap_dcrs",
+    "record_date": "20260609",
+    "list_date": "",
+    "K_raw": 0.995,
+    "detail": "rate=0.5(무상감자)"
+  },
+  {
+    "symbol": "021880",
+    "action_type": "cap_dcrs",
+    "record_date": "20260608",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "327950",
+    "action_type": "cap_dcrs",
+    "record_date": "20260608",
+    "list_date": "",
+    "K_raw": 0.9976,
+    "detail": "rate=0.24(무상감자)"
+  },
+  {
+    "symbol": "200230",
+    "action_type": "cap_dcrs",
+    "record_date": "20260605",
+    "list_date": "2026/06/30",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "042040",
+    "action_type": "cap_dcrs",
+    "record_date": "20260601",
+    "list_date": "2026/06/26",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "052190",
+    "action_type": "cap_dcrs",
+    "record_date": "20260526",
+    "list_date": "",
+    "K_raw": 0.9998,
+    "detail": "rate=0.02(무상감자)"
+  },
+  {
+    "symbol": "111760",
+    "action_type": "cap_dcrs",
+    "record_date": "20260526",
+    "list_date": "",
+    "K_raw": 0.9922,
+    "detail": "rate=0.78(유상감자)"
+  },
+  {
+    "symbol": "097780",
+    "action_type": "cap_dcrs",
+    "record_date": "20260525",
+    "list_date": "2026/06/16",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "318400",
+    "action_type": "cap_dcrs",
+    "record_date": "20260520",
+    "list_date": "",
+    "K_raw": 0.9997,
+    "detail": "rate=0.03(무상감자)"
+  },
+  {
+    "symbol": "31840K",
+    "action_type": "cap_dcrs",
+    "record_date": "20260520",
+    "list_date": "",
+    "K_raw": 0.9997,
+    "detail": "rate=0.03(무상감자)"
+  },
+  {
+    "symbol": "31840L",
+    "action_type": "cap_dcrs",
+    "record_date": "20260520",
+    "list_date": "",
+    "K_raw": 0.9997,
+    "detail": "rate=0.03(무상감자)"
+  },
+  {
+    "symbol": "31840M",
+    "action_type": "cap_dcrs",
+    "record_date": "20260520",
+    "list_date": "",
+    "K_raw": 0.9997,
+    "detail": "rate=0.03(무상감자)"
+  },
+  {
+    "symbol": "305400",
+    "action_type": "cap_dcrs",
+    "record_date": "20260518",
+    "list_date": "",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "900120",
+    "action_type": "cap_dcrs",
+    "record_date": "20260513",
+    "list_date": "2026/06/26",
+    "K_raw": 0.99,
+    "detail": "rate=1.0()"
+  },
+  {
+    "symbol": "372960",
+    "action_type": "cap_dcrs",
+    "record_date": "20260511",
+    "list_date": "",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "006740",
+    "action_type": "cap_dcrs",
+    "record_date": "20260507",
+    "list_date": "2026/05/29",
+    "K_raw": 0.9992,
+    "detail": "rate=0.08(무상감자)"
+  },
+  {
+    "symbol": "204630",
+    "action_type": "cap_dcrs",
+    "record_date": "20260507",
+    "list_date": "",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "010600",
+    "action_type": "cap_dcrs",
+    "record_date": "20260506",
+    "list_date": "",
+    "K_raw": 0.9999,
+    "detail": "rate=0.01(무상감자)"
+  },
+  {
+    "symbol": "109960",
+    "action_type": "cap_dcrs",
+    "record_date": "20260506",
+    "list_date": "2026/06/01",
+    "K_raw": 0.9995,
+    "detail": "rate=0.05(무상감자)"
+  },
+  {
+    "symbol": "318400",
+    "action_type": "cap_dcrs",
+    "record_date": "20260506",
+    "list_date": "",
+    "K_raw": 0.9992,
+    "detail": "rate=0.08(무상감자)"
+  },
+  {
+    "symbol": "31840K",
+    "action_type": "cap_dcrs",
+    "record_date": "20260506",
+    "list_date": "",
+    "K_raw": 0.9992,
+    "detail": "rate=0.08(무상감자)"
+  },
+  {
+    "symbol": "31840L",
+    "action_type": "cap_dcrs",
+    "record_date": "20260506",
+    "list_date": "",
+    "K_raw": 0.9992,
+    "detail": "rate=0.08(무상감자)"
+  },
+  {
+    "symbol": "31840M",
+    "action_type": "cap_dcrs",
+    "record_date": "20260506",
+    "list_date": "",
+    "K_raw": 0.9992,
+    "detail": "rate=0.08(무상감자)"
+  },
+  {
+    "symbol": "32218K",
+    "action_type": "cap_dcrs",
+    "record_date": "20260506",
+    "list_date": "",
+    "K_raw": 0.9911,
+    "detail": "rate=0.89(무상감자)"
+  },
+  {
+    "symbol": "151910",
+    "action_type": "cap_dcrs",
+    "record_date": "20260504",
+    "list_date": "",
+    "K_raw": 0.9999,
+    "detail": "rate=0.01(무상감자)"
+  },
+  {
+    "symbol": "052300",
+    "action_type": "cap_dcrs",
+    "record_date": "20260503",
+    "list_date": "2026/05/22",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "036090",
+    "action_type": "cap_dcrs",
+    "record_date": "20260430",
+    "list_date": "2026/05/21",
+    "K_raw": 0.9967,
+    "detail": "rate=0.33(무상감자)"
+  },
+  {
+    "symbol": "053320",
+    "action_type": "cap_dcrs",
+    "record_date": "20260430",
+    "list_date": "",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "073570",
+    "action_type": "cap_dcrs",
+    "record_date": "20260430",
+    "list_date": "2026/05/20",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "078590",
+    "action_type": "cap_dcrs",
+    "record_date": "20260430",
+    "list_date": "2026/05/27",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "016600",
+    "action_type": "cap_dcrs",
+    "record_date": "20260429",
+    "list_date": "2026/05/29",
+    "K_raw": 0.99,
+    "detail": "rate=1.0()"
+  },
+  {
+    "symbol": "044060",
+    "action_type": "cap_dcrs",
+    "record_date": "20260429",
+    "list_date": "",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "065560",
+    "action_type": "cap_dcrs",
+    "record_date": "20260429",
+    "list_date": "",
+    "K_raw": 0.9999,
+    "detail": "rate=0.01(무상감자)"
+  },
+  {
+    "symbol": "245620",
+    "action_type": "cap_dcrs",
+    "record_date": "20260429",
+    "list_date": "2026/06/12",
+    "K_raw": 0.9983,
+    "detail": "rate=0.17(무상감자)"
+  },
+  {
+    "symbol": "096690",
+    "action_type": "cap_dcrs",
+    "record_date": "20260428",
+    "list_date": "2026/05/21",
+    "K_raw": 0.9983,
+    "detail": "rate=0.17(무상감자)"
+  },
+  {
+    "symbol": "001230",
+    "action_type": "cap_dcrs",
+    "record_date": "20260427",
+    "list_date": "2026/05/29",
+    "K_raw": 0.99,
+    "detail": "rate=1.0()"
+  },
+  {
+    "symbol": "118000",
+    "action_type": "cap_dcrs",
+    "record_date": "20260427",
+    "list_date": "2026/05/18",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "037950",
+    "action_type": "cap_dcrs",
+    "record_date": "20260420",
+    "list_date": "2026/05/08",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "097780",
+    "action_type": "cap_dcrs",
+    "record_date": "20260420",
+    "list_date": "2026/05/07",
+    "K_raw": 0.992,
+    "detail": "rate=0.8(유상감자)"
+  },
+  {
+    "symbol": "069920",
+    "action_type": "cap_dcrs",
+    "record_date": "20260416",
+    "list_date": "2026/05/07",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "002070",
+    "action_type": "cap_dcrs",
+    "record_date": "20260415",
+    "list_date": "2026/05/06",
+    "K_raw": 0.9997,
+    "detail": "rate=0.03(무상감자)"
+  },
+  {
+    "symbol": "007460",
+    "action_type": "cap_dcrs",
+    "record_date": "20260415",
+    "list_date": "2026/05/08",
+    "K_raw": 0.9993,
+    "detail": "rate=0.07(무상감자)"
+  },
+  {
+    "symbol": "043090",
+    "action_type": "cap_dcrs",
+    "record_date": "20260415",
+    "list_date": "2026/04/30",
+    "K_raw": 0.9967,
+    "detail": "rate=0.33(무상감자)"
+  },
+  {
+    "symbol": "196490",
+    "action_type": "cap_dcrs",
+    "record_date": "20260415",
+    "list_date": "2026/05/06",
+    "K_raw": 0.9997,
+    "detail": "rate=0.03(무상감자)"
+  },
+  {
+    "symbol": "456370",
+    "action_type": "cap_dcrs",
+    "record_date": "20260415",
+    "list_date": "",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "45637K",
+    "action_type": "cap_dcrs",
+    "record_date": "20260415",
+    "list_date": "",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "003060",
+    "action_type": "cap_dcrs",
+    "record_date": "20260414",
+    "list_date": "2026/05/08",
+    "K_raw": 0.9993,
+    "detail": "rate=0.07(무상감자)"
+  },
+  {
+    "symbol": "018700",
+    "action_type": "cap_dcrs",
+    "record_date": "20260414",
+    "list_date": "2026/05/12",
+    "K_raw": 0.9967,
+    "detail": "rate=0.33(무상감자)"
+  },
+  {
+    "symbol": "035620",
+    "action_type": "cap_dcrs",
+    "record_date": "20260414",
+    "list_date": "2026/05/06",
+    "K_raw": 0.9975,
+    "detail": "rate=0.25(무상감자)"
+  },
+  {
+    "symbol": "101400",
+    "action_type": "cap_dcrs",
+    "record_date": "20260414",
+    "list_date": "2026/05/15",
+    "K_raw": 0.9967,
+    "detail": "rate=0.33(무상감자)"
+  },
+  {
+    "symbol": "123840",
+    "action_type": "cap_dcrs",
+    "record_date": "20260414",
+    "list_date": "2026/05/08",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "258540",
+    "action_type": "cap_dcrs",
+    "record_date": "20260414",
+    "list_date": "",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "011080",
+    "action_type": "cap_dcrs",
+    "record_date": "20260413",
+    "list_date": "2026/05/07",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "032800",
+    "action_type": "cap_dcrs",
+    "record_date": "20260413",
+    "list_date": "2026/05/06",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "057680",
+    "action_type": "cap_dcrs",
+    "record_date": "20260413",
+    "list_date": "2026/04/30",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "078860",
+    "action_type": "cap_dcrs",
+    "record_date": "20260413",
+    "list_date": "2026/04/30",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "276730",
+    "action_type": "cap_dcrs",
+    "record_date": "20260413",
+    "list_date": "2026/05/06",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "009310",
+    "action_type": "cap_dcrs",
+    "record_date": "20260410",
+    "list_date": "2026/05/11",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "012340",
+    "action_type": "cap_dcrs",
+    "record_date": "20260410",
+    "list_date": "2026/05/06",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "321370",
+    "action_type": "cap_dcrs",
+    "record_date": "20260410",
+    "list_date": "2026/05/04",
+    "K_raw": 0.99,
+    "detail": "rate=1.0()"
+  },
+  {
+    "symbol": "058450",
+    "action_type": "cap_dcrs",
+    "record_date": "20260409",
+    "list_date": "2026/04/27",
+    "K_raw": 0.9975,
+    "detail": "rate=0.25(무상감자)"
+  },
+  {
+    "symbol": "085810",
+    "action_type": "cap_dcrs",
+    "record_date": "20260409",
+    "list_date": "2026/04/29",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "497800",
+    "action_type": "cap_dcrs",
+    "record_date": "20260409",
+    "list_date": "",
+    "K_raw": 0.9944,
+    "detail": "rate=0.56(무상감자)"
+  },
+  {
+    "symbol": "060900",
+    "action_type": "cap_dcrs",
+    "record_date": "20260408",
+    "list_date": "2026/04/30",
+    "K_raw": 0.9995,
+    "detail": "rate=0.05(무상감자)"
+  },
+  {
+    "symbol": "377030",
+    "action_type": "cap_dcrs",
+    "record_date": "20260408",
+    "list_date": "2026/04/30",
+    "K_raw": 0.9975,
+    "detail": "rate=0.25(무상감자)"
+  },
+  {
+    "symbol": "497800",
+    "action_type": "cap_dcrs",
+    "record_date": "20260331",
+    "list_date": "",
+    "K_raw": 0.99,
+    "detail": "rate=1.0()"
+  },
+  {
+    "symbol": "106080",
+    "action_type": "cap_dcrs",
+    "record_date": "20260325",
+    "list_date": "2026/04/16",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "078940",
+    "action_type": "cap_dcrs",
+    "record_date": "20260313",
+    "list_date": "",
+    "K_raw": 0.9999,
+    "detail": "rate=0.01(무상감자)"
+  },
+  {
+    "symbol": "008600",
+    "action_type": "cap_dcrs",
+    "record_date": "20260305",
+    "list_date": "2026/03/20",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "195990",
+    "action_type": "cap_dcrs",
+    "record_date": "20260223",
+    "list_date": "2026/03/12",
+    "K_raw": 0.999,
+    "detail": "rate=0.1(무상감자)"
+  },
+  {
+    "symbol": "050110",
+    "action_type": "cap_dcrs",
+    "record_date": "20260205",
+    "list_date": "2026/02/27",
+    "K_raw": 0.998,
+    "detail": "rate=0.2(무상감자)"
+  },
+  {
+    "symbol": "075940",
+    "action_type": "cap_dcrs",
+    "record_date": "20260109",
+    "list_date": "",
+    "K_raw": 0.99,
+    "detail": "rate=1.0()"
+  }
+]

@@ -16,8 +16,14 @@
 
 import logging
 import argparse
+import sys
 from datetime import date, timedelta
 from typing import Optional, List, Dict
+
+# daily_pipeline.py가 자식 프로세스 stdout을 UTF-8로 디코딩하므로(run() 참고) 맞춰줌 —
+# 콘솔이 cp949인 환경(수동 실행 .bat 등)에서 안 맞추면 UnicodeEncodeError 스팸 발생(2026-06-23)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import numpy as np
 import pandas as pd
@@ -33,8 +39,9 @@ from db_features import (
     load_prices_for_symbol,
     load_all_closes,
     load_flows,
-    load_fundamentals_latest,
+    load_per_pbr_pit,
     load_all_symbols_with_market,
+    load_symbol_sector_map,
     get_last_feature_date,
 )
 
@@ -43,7 +50,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),  # 기본값(stderr)은 위 reconfigure 효과를 못 받음
         logging.FileHandler("features.log", encoding="utf-8"),
     ],
 )
@@ -78,9 +85,10 @@ def _df_to_records(
     tech_df: pd.DataFrame,
     rel_df: pd.DataFrame,
     flow_df: pd.DataFrame,
-    fund: Dict,
+    fund_pit: pd.DataFrame,
     start_date: Optional[str],
     regime_df: Optional[pd.DataFrame] = None,
+    frgn_feat_df: Optional[pd.DataFrame] = None,
 ) -> List[Dict]:
     """
     모든 피처 DataFrame을 합치고 DB 레코드 형태로 변환
@@ -96,9 +104,13 @@ def _df_to_records(
     # rel_sector_1d는 DB 스키마에 없으므로 제거
     combined = combined.drop(columns=["rel_sector_1d"], errors="ignore")
 
-    # 펀더멘털 추가 (모든 날짜에 동일한 값 — 최근값)
-    combined["per"] = fund.get("per")
-    combined["pbr"] = fund.get("pbr")
+    # 펀더멘털 추가 (point-in-time PER/PBR — 날짜별 join, look-ahead bias 없음)
+    combined = combined.join(fund_pit, how="left")
+
+    # frgn_norm_cum10/frgn_streak3: 기각됨(2026-07-02), 계산 미전달(2026-07-05).
+    # 기존 저장분은 DB에 남아 있음 — frgn_feat_df=None이면 join 건너뜀.
+    if frgn_feat_df is not None and not frgn_feat_df.empty:
+        combined = combined.join(frgn_feat_df, how="left")
 
     # NaN이 너무 많은 초기 행 제거 (워밍업 기간)
     feature_cols = [c for c in combined.columns if c != "target"]
@@ -162,15 +174,19 @@ def process_symbol(
 
     rel_df = calc_relative_strength(close, market_ret_series, sector_ret_series)
 
-    # ── 수급 피처 ──
+    # ── 수급 피처 (flows — 외국인 보유비율 기반) ──
     flows_df = load_flows(symbol, start=data_start)
     flow_df  = calc_flow_features(tech_df.index, flows_df)
 
-    # ── 펀더멘털 ──
-    fund = load_fundamentals_latest(symbol)
+    # ── 펀더멘털 (point-in-time PER/PBR — look-ahead bias 제거, 2026-06-27) ──
+    fund_pit = load_per_pbr_pit(symbol, tech_df.index, close.reindex(tech_df.index))
 
     # ── 합치기 & 저장 ──
-    records = _df_to_records(symbol, tech_df, rel_df, flow_df, fund, last_saved, regime_df)
+    # frgn_norm_cum10/frgn_streak3: 기각됨(SHAP 0%, 2026-07-02). 계산 제거(L1 수정 2026-07-05).
+    # 기존 저장분은 DB에 남아 있음. 재활성화 시 load_frgn_features() + frgn_feat_df 인자 복구.
+    records = _df_to_records(
+        symbol, tech_df, rel_df, flow_df, fund_pit, last_saved, regime_df,
+    )
     if records:
         upsert_features(records)
 
@@ -210,11 +226,17 @@ def run_pipeline(
     symbol_market_map = {s["symbol"]: s["market"] for s in sym_market_list}
 
     logger.info("[2/3] 시장/섹터 평균 수익률 + 시장 국면 피처 계산 중...")
+    symbol_sector_map = load_symbol_sector_map()
+    n_with_sector = sum(1 for v in symbol_sector_map.values() if v)
     market_rets    = build_market_returns(all_closes, symbol_market_map)
-    sector_ret_map = build_sector_returns(all_closes, symbol_market_map, market_rets=market_rets)
-    logger.info("  KOSPI 기준일 수: %d, KOSDAQ: %d",
+    sector_ret_map = build_sector_returns(
+        all_closes, symbol_market_map, market_rets=market_rets,
+        symbol_sector_map=symbol_sector_map,
+    )
+    logger.info("  KOSPI 기준일 수: %d, KOSDAQ: %d | 업종코드 수집된 종목: %d/%d (나머지는 시장 평균 폴백)",
                 len(market_rets.get("KOSPI", [])),
-                len(market_rets.get("KOSDAQ", [])))
+                len(market_rets.get("KOSDAQ", [])),
+                n_with_sector, len(symbol_sector_map))
 
     regime_df = build_market_regime_features(all_closes, start=data_start)
     if regime_df.empty:

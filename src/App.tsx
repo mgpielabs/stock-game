@@ -6,9 +6,9 @@ import HistoryHomePage from './pages/HistoryHomePage'
 import HistoryStockPage from './pages/HistoryStockPage'
 import HistoryPortfolioPage from './pages/HistoryPortfolioPage'
 import HistoryResultsPage from './pages/HistoryResultsPage'
-import AIRecommendPage from './pages/AIRecommendPage'
 import PaperTradingPage from './pages/PaperTradingPage'
 import HelpPage from './pages/HelpPage'
+import StockExplorePage from './pages/StockExplorePage'
 import { useHistoryStore } from './store/historyStore'
 import { fetchCandlesCached, getPriceAt } from './api/yahooFinance'
 import { getSyntheticCandles, isSynthetic } from './api/syntheticStocks'
@@ -70,7 +70,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<ModeSelectPage />} />
         <Route path="/history/*" element={<HistoryLayout />} />
-        <Route path="/ai-recommend" element={<AIRecommendPage />} />
+        <Route path="/recommend" element={<StockExplorePage />} />
+        <Route path="/screener" element={<StockExplorePage />} />
+        <Route path="/ai-recommend" element={<StockExplorePage />} />
         <Route path="/paper-trading" element={<PaperTradingPage />} />
         <Route path="/help" element={<HelpPage />} />
       </Routes>

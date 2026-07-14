@@ -89,7 +89,7 @@ export default function ModeSelectPage() {
 
         {/* AI 추천 카드 */}
         <Link
-          to="/ai-recommend"
+          to="/recommend"
           className="group block bg-gray-900 border border-gray-800 hover:border-emerald-500/50 rounded-2xl p-6 transition-all hover:shadow-lg hover:shadow-emerald-500/10"
         >
           <div className="flex items-center gap-3 mb-4">
@@ -109,7 +109,7 @@ export default function ModeSelectPage() {
                   {aiOnline === null ? '확인 중' : aiOnline ? '서버 ON' : '서버 OFF'}
                 </span>
               </div>
-              <p className="text-gray-400 text-xs">LightGBM · SHAP 분석</p>
+              <p className="text-gray-400 text-xs">CatBoost+XGBoost · SHAP 분석</p>
             </div>
           </div>
           <p className="text-gray-400 text-sm mb-5 leading-relaxed">
@@ -123,6 +123,29 @@ export default function ModeSelectPage() {
                   서버 오프라인 · <code className="text-gray-400">uvicorn main:app --port 8000</code> 실행 후 접속
                 </p>
             }
+          </div>
+        </Link>
+
+        {/* 종목 스크리너 카드 */}
+        <Link
+          to="/screener"
+          className="group block bg-gray-900 border border-gray-800 hover:border-sky-500/50 rounded-2xl p-6 transition-all hover:shadow-lg hover:shadow-sky-500/10"
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-sky-500/20 flex items-center justify-center text-xl">
+              🔍
+            </div>
+            <div>
+              <h2 className="text-white font-bold text-lg">종목 스크리너</h2>
+              <p className="text-gray-400 text-xs">검증된 조건으로 직접 검색</p>
+            </div>
+          </div>
+          <p className="text-gray-400 text-sm mb-5 leading-relaxed">
+            워크포워드로 검증된 조건(고배당, RSI 과매도, 볼린저 하단)으로 종목을 검색하고
+            최종 선택은 직접 합니다. 어떤 조건이 검증됐는지/안 됐는지 배지로 명확히 표시됩니다.
+          </p>
+          <div className="bg-sky-500/10 border border-sky-500/20 rounded-xl px-4 py-3">
+            <p className="text-sky-400 text-xs">조건 검색하러 가기 →</p>
           </div>
         </Link>
 

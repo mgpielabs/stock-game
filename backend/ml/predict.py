@@ -3,6 +3,7 @@
 """
 
 import argparse
+import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -18,20 +19,19 @@ MODELS_DIR = Path(__file__).parent.parent / "models"
 def load_model(target_col: str = "target_1d", version: Optional[str] = None) -> lgb.Booster:
     """
     models/{target_col}_{version}/model.lgb 로드.
-    version 미지정 시 가장 최신 버전 사용.
+    version 미지정 시 가장 최신 버전 사용(폴더 mtime 기준 — 실험용 폴더 이름이
+    섞여도 문자열 정렬로 잘못된 폴더가 선택되지 않도록 함).
     """
-    candidates = sorted(MODELS_DIR.glob(f"{target_col}_*/model.lgb"))
+    candidates = list(MODELS_DIR.glob(f"{target_col}_*/model.lgb"))
     if not candidates:
         raise FileNotFoundError(f"저장된 모델 없음: {target_col}")
 
     if version:
-        matched = [p for p in candidates if version in str(p)]
-        if not matched:
+        candidates = [p for p in candidates if version in str(p)]
+        if not candidates:
             raise FileNotFoundError(f"버전 없음: {version}")
-        model_path = matched[-1]
-    else:
-        model_path = candidates[-1]
 
+    model_path = max(candidates, key=lambda p: os.path.getmtime(p))
     return lgb.Booster(model_file=str(model_path))
 
 

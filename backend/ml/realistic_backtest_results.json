@@ -1,0 +1,93 @@
+{
+  "5d_theory": {
+    "win_pct": 45.2,
+    "hit5_pct": 32.9,
+    "avg_pct": 2.51,
+    "n_days": 248
+  },
+  "5d_gap_only": {
+    "win_pct": 43.4,
+    "hit5_pct": 31.2,
+    "avg_pct": 0.19,
+    "n_days": 248
+  },
+  "5d_real": {
+    "win_pct": 42.7,
+    "hit5_pct": 30.6,
+    "avg_pct": -0.14,
+    "n_days": 248
+  },
+  "gap_analysis": {
+    "mean_pct": 0.43,
+    "median_pct": 0.33,
+    "pct_gapup": 54.5,
+    "pct_gapdn": 35.7,
+    "p5_pct": -5.61,
+    "p95_pct": 15.76
+  },
+  "cost_decomp": {
+    "gap_pct": -2.32,
+    "tax_comm_pct": -0.23,
+    "slip_pct": -0.1,
+    "total_pct": -2.65,
+    "win_diff_pp": -2.5
+  },
+  "regime_5d_theory": {
+    "강세": {
+      "win_pct": 45.2,
+      "hit5_pct": 32.9,
+      "avg_pct": 2.51,
+      "n_days": 252
+    },
+    "횡보": {
+      "win_pct": 0,
+      "hit5_pct": 0,
+      "avg_pct": 0,
+      "n_days": 0
+    },
+    "약세": {
+      "win_pct": 0,
+      "hit5_pct": 0,
+      "avg_pct": 0,
+      "n_days": 0
+    }
+  },
+  "regime_5d_real": {
+    "강세": {
+      "win_pct": 42.7,
+      "hit5_pct": 30.6,
+      "avg_pct": -0.14,
+      "n_days": 252
+    },
+    "횡보": {
+      "win_pct": 0,
+      "hit5_pct": 0,
+      "avg_pct": 0,
+      "n_days": 0
+    },
+    "약세": {
+      "win_pct": 0,
+      "hit5_pct": 0,
+      "avg_pct": 0,
+      "n_days": 0
+    }
+  },
+  "liquidity": {
+    "liq_days": 49,
+    "total_days": 252,
+    "pct": 19.4
+  },
+  "60d_5dmodel_theory": {
+    "win_pct": 43.7,
+    "hit5_pct": 39.7,
+    "avg_pct": 11.73,
+    "n_days": 193
+  },
+  "60d_5dmodel_real": {
+    "win_pct": 42.2,
+    "hit5_pct": 38.7,
+    "avg_pct": 10.24,
+    "n_days": 193
+  },
+  "verdict": "주의 — 비용 반영 시 수익 거의 소멸 또는 음수"
+}

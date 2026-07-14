@@ -19,6 +19,33 @@ from db_features import load_index_closes
 logger = logging.getLogger(__name__)
 
 
+def load_kospi_regime_labels(start: str = "2000-01-01") -> pd.Series:
+    """
+    KOSPI 60일/120일 이동평균 교차로 시장 국면을 bull/bear로 분류.
+    ma60 > ma120 → bull, 그 외 → bear. (train_regime.py의 국면별 분리 학습에서 사용)
+
+    반환: index=date(str, YYYYMMDD), value='bull'|'bear'
+    """
+    idx_closes = load_index_closes(start=start)
+    kospi = idx_closes.get("1001", pd.Series(dtype=float))
+    if isinstance(kospi, pd.DataFrame):
+        kospi = kospi.squeeze()
+    if kospi.empty:
+        raise RuntimeError("market_index에 KOSPI(1001) 데이터 없음 — 국면 판별 불가")
+
+    kospi = kospi.astype(float).sort_index()
+    ma60  = kospi.rolling(60,  min_periods=30).mean()
+    ma120 = kospi.rolling(120, min_periods=60).mean()
+    regime = (ma60 > ma120).map({True: "bull", False: "bear"}).dropna()
+    regime.name = "regime"
+
+    logger.info(
+        "KOSPI 국면(60d/120d MA 교차): bull=%d일, bear=%d일 (전체 %d일)",
+        (regime == "bull").sum(), (regime == "bear").sum(), len(regime),
+    )
+    return regime
+
+
 def build_market_regime_features(
     all_closes: pd.DataFrame,
     start: Optional[str] = None,

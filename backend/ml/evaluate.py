@@ -28,8 +28,8 @@ LIMIT_UP        = 0.29           # 상한가(29% 이상) 종목 매수 불가
 
 def _net_ret(raw: float) -> float:
     """슬리피지 + 수수료 + 매도세 차감 후 순수익률"""
-    buy_cost  = SLIPPAGE + COMMISSION          # 0.515%
-    sell_cost = SLIPPAGE + COMMISSION + SELL_TAX  # 0.715%
+    buy_cost  = SLIPPAGE + COMMISSION             # 0.215%
+    sell_cost = SLIPPAGE + COMMISSION + SELL_TAX  # 0.415%
     return (1 + raw) * (1 - buy_cost) * (1 - sell_cost) - 1
 
 
@@ -142,10 +142,13 @@ def run_backtest_5d(
     반환: 5일 구간별 비용차감 누적수익률 Series
     """
     df = val_meta[["symbol", "date", "ret_fwd_5d"]].copy()
-    df["ret_fwd_5d"] = df["ret_fwd_5d"].fillna(0.0)
     df["y_proba"] = y_proba
     if "volume_krw" in val_meta.columns:
         df["volume_krw"] = val_meta["volume_krw"].fillna(0)
+
+    # ret_fwd_5d가 NaN인 행(데이터 끝자락이라 5거래일 후 종가를 아직 모르는 경우)은
+    # 0%로 채우면 실제로는 알 수 없는 수익률이 "손실 없음"으로 둔갑함 → 후보군에서 제외
+    df = df.dropna(subset=["ret_fwd_5d"])
 
     unique_dates = sorted(df["date"].unique())
     rebal_dates  = unique_dates[::5]
