@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+﻿import { useEffect, useRef, useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, Link } from 'react-router-dom'
 import {
@@ -11,7 +11,7 @@ import {
 } from 'lightweight-charts'
 import { fetchQuote, fetchCandlesCached, searchSymbols, type SearchResult } from '../api/yahooFinance'
 import {
-  aiApi,
+  aiApi, screenerApi,
   getWatchlist, toggleWatchlist,
   getMemo, saveMemo,
   getVirtualTrades, addVirtualTrade, deleteVirtualTrade,
@@ -22,17 +22,18 @@ import {
   type TradeStrategy, type VolumeAnomalyResponse,
   type VolatilityRegime,
   type Prediction60d, type HealthResponse,
+  type LivePerformanceResponse, type OpenSummaryResponse, type SectorFlowResponse,
+  type WatchlistItem, type SignalLog, type CalendarEvent, type CorrelationResponse,
+  signalsApi, calendarApi, portfolioApi,
 } from '../api/aiRecommend'
 import StatusBanner from '../components/StatusBanner'
+import { fmtDate } from '../utils/format'
 
 // ── 유틸 ──────────────────────────────────────────────────────
 
 function yyyymmddToTs(s: string): UTCTimestamp {
   const y = +s.slice(0, 4), m = +s.slice(4, 6) - 1, d = +s.slice(6, 8)
   return Math.floor(new Date(y, m, d, 9, 0, 0).getTime() / 1000) as UTCTimestamp
-}
-function fmtDate(s: string): string {
-  return s.length === 8 ? `${s.slice(0, 4)}.${s.slice(4, 6)}.${s.slice(6, 8)}` : s
 }
 const normalizeSymbol = (s: string) => s.replace(/\.(KS|KQ)$/, '')
 function todayStr(): string {
@@ -407,7 +408,7 @@ function MarketBanner({ market }: { market: MarketTrend }) {
 
 // ── 일일 요약 ─────────────────────────────────────────────────
 
-function DailySummaryCard({ summary, names, onClickSymbol, volSurgeSymbols }: { summary: DailySummary; names: Record<string, string>; onClickSymbol?: (sym: string, name: string) => void; volSurgeSymbols?: Set<string> }) {
+export function DailySummaryCard({ summary, names, onClickSymbol, volSurgeSymbols }: { summary: DailySummary; names: Record<string, string>; onClickSymbol?: (sym: string, name: string) => void; volSurgeSymbols?: Set<string> }) {
   const [open, setOpen] = useState(true)
   const { market, top3, caution, model_confidence } = summary
 
@@ -609,237 +610,12 @@ const RISK_LEVEL_HINTS: Record<string, string> = {
   '낮음': '저위험: 위험 요인 없음. 상대적으로 안정적이나 절대적 안전을 보장하지는 않습니다.',
 }
 
-// ── 전략 바 (카드 하단) ─────────────────────────────────────────
-
-function StrategyBar({ strategy }: { strategy: TradeStrategy }) {
-  const actionColor =
-    strategy.action_label === '관망 권장' ? 'text-red-400' :
-    strategy.action_label === '신중 진입' ? 'text-yellow-400' :
-    'text-emerald-400'
-
-  const riskColor =
-    strategy.risk_level === '높음' ? 'text-red-400/70' :
-    strategy.risk_level === '중간' ? 'text-yellow-400/70' :
-    'text-emerald-400/70'
-
-  const t = strategy.exit_targets
-  return (
-    <div className="space-y-1 text-xs">
-      <div className="flex items-center justify-between gap-1">
-        <BadgeTooltip text={ACTION_HINTS[strategy.action_label] ?? strategy.action_label}>
-          <span className={`font-semibold shrink-0 cursor-default ${actionColor}`}>{strategy.action_label}</span>
-        </BadgeTooltip>
-        <BadgeTooltip text={RISK_LEVEL_HINTS[strategy.risk_level] ?? strategy.risk_level}>
-          <span className={`shrink-0 cursor-default ${riskColor}`}>{strategy.risk_level}위험</span>
-        </BadgeTooltip>
-      </div>
-      <div className="text-gray-500">
-        목표 <span className="text-red-400">{t.target1_pct}</span>
-        {' '}/ 손절 <span className="text-blue-400">{t.stop_loss_pct}</span>
-      </div>
-    </div>
-  )
-}
-
-// ── PredictionCard ─────────────────────────────────────────────
-
 interface PredictionWithMeta extends Prediction {
   sparkline: number[]
 }
-
-function PredictionCard({
-  pred, onClick, onCompareToggle, inCompare, watchlist, onStarChange, lowVolRegime,
-}: {
-  pred: PredictionWithMeta
-  onClick: () => void
-  onCompareToggle: (sym: string) => void
-  inCompare: boolean
-  watchlist: string[]
-  onStarChange?: () => void
-  /** 저변동성 구간 — 신뢰도 HIGH가 아닌 카드는 살짝 비강조 처리 (추천 자체는 그대로 유지) */
-  lowVolRegime?: boolean
-}) {
-  const [starred, setStarred] = useState(watchlist.some(w => normalizeSymbol(w) === normalizeSymbol(pred.symbol)))
-  const pct = Math.round(displayProb(pred) * 100)
-
-  const handleStar = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    const next = toggleWatchlist(normalizeSymbol(pred.symbol))
-    setStarred(next)
-    onStarChange?.()
-  }
-  const handleCompare = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    onCompareToggle(pred.symbol)
-  }
-
-  const deemphasize = lowVolRegime && pred.confidence_level !== 'HIGH'
-
-  return (
-    <div className={`relative bg-gray-900 border rounded-xl p-4 transition-all space-y-3 ${
-      inCompare
-        ? 'border-indigo-500/60 shadow-lg shadow-indigo-500/10'
-        : pred.risk_level === 'HIGH'
-          ? 'border-red-500/30 hover:border-red-500/50'
-          : 'border-gray-800 hover:border-emerald-500/40'
-    } ${deemphasize ? 'opacity-60' : ''}`}>
-      {/* 상단 버튼 */}
-      <div className="absolute top-3 right-3 flex items-center gap-1.5">
-        <button onClick={handleCompare} title="비교에 추가"
-          className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
-            inCompare ? 'bg-indigo-500/30 text-indigo-300' : 'bg-gray-800 text-gray-500 hover:text-gray-300'
-          }`}>비교</button>
-        <button onClick={handleStar} title="관심 종목"
-          className={`text-base transition-colors ${starred ? 'text-yellow-400' : 'text-gray-600 hover:text-gray-400'}`}>
-          ★
-        </button>
-      </div>
-
-      <button onClick={onClick} className="w-full text-left group space-y-3">
-        <div className="flex items-start gap-2 pr-16">
-          <span className="shrink-0 text-xs font-bold text-gray-400 bg-gray-800 rounded px-1.5 py-0.5 group-hover:text-white transition-colors">
-            #{pred.rank}
-          </span>
-          <div className="min-w-0">
-            <p className="text-white font-semibold text-sm leading-tight truncate">
-              {pred.name !== pred.symbol ? pred.name : '—'}
-            </p>
-            <p className="text-gray-400 text-xs">{pred.symbol}</p>
-          </div>
-        </div>
-
-        <div className="space-y-1">
-          <SignalStrength prob={displayProb(pred)} />
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-500">상승 확률</span>
-            <span className={`text-sm font-bold ${pct >= 75 ? 'text-emerald-400' : pct >= 60 ? 'text-green-400' : 'text-gray-300'}`}>{pct}%</span>
-          </div>
-          <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full ${pct >= 75 ? 'bg-emerald-500' : pct >= 60 ? 'bg-green-500/80' : 'bg-emerald-700/60'}`}
-              style={{ width: `${pct}%` }} />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-1">
-          {pred.shap_top.slice(0, 3).map((s, i) => <ShapChip key={i} entry={s} />)}
-          {(pred.vol_ratio_20d ?? 0) >= 1.5 && (
-            <BadgeTooltip text={`20일 평균 거래량 대비 ${pred.vol_ratio_20d?.toFixed(1)}배 거래 중. 단기 변동성이 크고 급등락 가능성이 높습니다.`}>
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/30 whitespace-nowrap cursor-default">
-                🔥 거래량 {pred.vol_ratio_20d?.toFixed(1)}×
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.price_surge_warning && (
-            <BadgeTooltip text={`5일 수익률 ${((pred.ret_5d ?? 0) * 100).toFixed(1)}% / 당일 ${((pred.ret_1d ?? 0) * 100).toFixed(1)}% 급등. 추격 매수 시 단기 조정 위험이 있습니다.`}>
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-red-500/15 text-red-400 border border-red-500/30 whitespace-nowrap cursor-default">
-                ⚠ 단기급등
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.investor_sell_warning && (
-            <BadgeTooltip text="외국인+기관이 동시에 순매도하는데 개인만 순매수 중입니다(전일 기준). 룰 기반 참고 신호로, AI 모델 점수에는 반영되지 않습니다.">
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30 whitespace-nowrap cursor-default">
-                ⚠ 수급경고
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.high_vol_warning && (
-            <BadgeTooltip text="전일 장중 변동폭(고가-저가/종가)이 전체 종목 상위 5%였습니다. 전일 변동성이 높았던 종목은 통계적으로 이후 5일 수익률이 평균보다 낮은 경향이 있습니다(IS/OOS p=0.0000). AI 모델 점수에는 반영되지 않는 참고 정보입니다.">
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/30 whitespace-nowrap cursor-default">
-                ⚡ 변동성↑
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.dps_growth_flag && (
-            <BadgeTooltip text="전년 대비 주당배당금(DPS)이 배당 종목 중 상위 25% 증가한 종목입니다. 배당 성장 상위 종목은 OOS 기준 5일~60일 전구간에서 초과수익이 관찰됐습니다(+0.35~+2.64%p, p≤0.003). AI 모델 점수에는 반영되지 않으며, 배당이 없는 종목엔 표시되지 않습니다.">
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 whitespace-nowrap cursor-default">
-                📈 배당성장
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.gap_high && (
-            <BadgeTooltip text={`최근 20거래일 평균 시가갭이 ${pred.trail_gap20d_pct?.toFixed(1) ?? '?'}%로 높습니다(기준 2%). 갭이 큰 종목은 장 시작 시 이미 상승분이 반영돼 실전 수익이 줄어드는 경향이 있습니다. AI 모델 추천 순위에서 자동으로 하위로 배치됩니다. 매수 시 시가를 직접 확인 후 결정하세요(C모드 갭 필터).`}>
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 whitespace-nowrap cursor-default">
-                ↑ 갭주의
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.confidence_level === 'HIGH' && (
-            <BadgeTooltip text="신뢰도 HIGH: AI 확률 65% 이상 + 거래량 증가 + 상승 모멘텀이 모두 확인된 종목입니다.">
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 whitespace-nowrap cursor-default">
-                ✓ 신뢰HIGH
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.confidence_level === 'MEDIUM' && (
-            <BadgeTooltip text="신뢰도 MED: AI 확률 60% 이상이나 거래량·모멘텀 조건 중 일부가 미충족입니다.">
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 whitespace-nowrap cursor-default">
-                ~ 신뢰MED
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.risk_level === 'HIGH' && (
-            <BadgeTooltip text={`위험 HIGH: ${pred.risk_factors?.join(', ') || '복합 위험 요인'}. 포지션 크기를 줄이고 손절 기준을 명확히 하세요.`}>
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-red-500/15 text-red-400 border border-red-500/30 whitespace-nowrap cursor-default">
-                ⚠ 고위험
-              </span>
-            </BadgeTooltip>
-          )}
-          {pred.risk_level === 'MEDIUM' && (
-            <BadgeTooltip text={`위험 MED: ${pred.risk_factors?.join(', ') || '일부 위험 요인 존재'}. 분할 매수 및 손절 설정을 권장합니다.`}>
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/30 whitespace-nowrap cursor-default">
-                △ 중위험
-              </span>
-            </BadgeTooltip>
-          )}
-        </div>
-
-        <div className="pt-1 border-t border-gray-800/60">
-          {pred.sparkline.length > 0
-            ? <Sparkline prices={pred.sparkline} />
-            : <div className="h-9 bg-gray-800/50 rounded animate-pulse" />}
-        </div>
-
-        {pred.strategy && (
-          <div className="pt-1 border-t border-gray-800/60">
-            <StrategyBar strategy={pred.strategy} />
-          </div>
-        )}
-      </button>
-
-      {pred.top_reasons && pred.top_reasons.length > 0 && (() => {
-        const maxImpact = Math.max(...pred.top_reasons.map(r => r.impact), 0.001)
-        return (
-          <details className="group border-t border-gray-800/60 pt-2">
-            <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-300 list-none flex items-center gap-1 select-none">
-              <svg className="w-3 h-3 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-              추천 이유 보기
-            </summary>
-            <div className="mt-2 space-y-1.5">
-              {pred.top_reasons.map((r, i) => (
-                <div key={i}>
-                  <div className="flex items-center justify-between text-xs mb-0.5">
-                    <span className="text-gray-400 truncate pr-2">{r.label}</span>
-                    <span className="text-emerald-400 shrink-0 font-medium">+{r.impact.toFixed(3)}</span>
-                  </div>
-                  <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500/50 rounded-full transition-all" style={{ width: `${(r.impact / maxImpact) * 100}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </details>
-        )
-      })()}
-    </div>
-  )
-}
-
 // ── 비교 패널 ─────────────────────────────────────────────────
 
-function ComparePanel({
+export function ComparePanel({
   symbols, names, details, onClose,
 }: {
   symbols: string[]
@@ -1652,7 +1428,7 @@ export function DetailModal({
 
 const REANALYSIS_DISMISS_KEY = 'ai_reanalysis_dismissed_at'
 
-function ReanalysisBanner({ info }: { info: { available: boolean; generated_at?: string } | null }) {
+export function ReanalysisBanner({ info }: { info: { available: boolean; generated_at?: string } | null }) {
   const [dismissed, setDismissed] = useState(false)
   if (!info?.available || dismissed) return null
   if (typeof localStorage !== 'undefined' && localStorage.getItem(REANALYSIS_DISMISS_KEY) === info.generated_at) {
@@ -1679,7 +1455,7 @@ function ReanalysisBanner({ info }: { info: { available: boolean; generated_at?:
 // 2026-07-12: 기각된 필터 로직(probability threshold, max_count 축소) 제거.
 // 이 배너는 순수 정보 표시만 — 추천 종목 수·확률 필터에 영향 없음.
 
-function MarketModeBanner({ mode, message }: { mode: string; message: string }) {
+export function MarketModeBanner({ mode, message }: { mode: string; message: string }) {
   if (mode === 'aggressive' || !message) return null
 
   const isDefensive = mode === 'defensive'
@@ -1704,7 +1480,7 @@ function MarketModeBanner({ mode, message }: { mode: string; message: string }) 
 }
 
 // 약세장 가드(방향성 신호)와는 독립적인 신호라 동시에 뜰 수 있음 — 의도된 동작.
-function VolatilityRegimeBanner({ regime }: { regime: VolatilityRegime | null }) {
+export function VolatilityRegimeBanner({ regime }: { regime: VolatilityRegime | null }) {
   const [expanded, setExpanded] = useState(false)
   if (!regime || !regime.low_vol_warning) return null
 
@@ -1883,7 +1659,7 @@ function ExcludedStockRow({
   )
 }
 
-function ExcludedSection({
+export function ExcludedSection({
   excluded, names, onClickSymbol,
 }: {
   excluded: ExcludedStock[]
@@ -1933,7 +1709,7 @@ function ExcludedSection({
 
 // ── 거래량 이상 급등 스캐너 ───────────────────────────────────
 
-function VolumeAnomalySection({
+export function VolumeAnomalySection({
   onClickSymbol, watchlist, onStarChange,
 }: {
   onClickSymbol: (sym: string, name: string) => void
@@ -2180,7 +1956,7 @@ function Prediction60dCard({ pred, is5dOverlap, onClickSymbol }: {
   )
 }
 
-function Predictions60dSection({
+export function Predictions60dSection({
   predictions5d,
   onClickSymbol,
 }: {
@@ -2433,7 +2209,7 @@ function KospiStockCard({
   )
 }
 
-function KospiTop10Section({
+export function KospiTop10Section({
   onClickSymbol, onCompareToggle, compareList, watchlist, onStarChange,
   predictions, volSurge,
 }: {
@@ -2546,7 +2322,7 @@ function CostsBadge({ costs }: { costs: CostsApplied }) {
   )
 }
 
-function BacktestSection({ perf }: { perf: PerformanceResponse }) {
+export function BacktestSection({ perf }: { perf: PerformanceResponse }) {
   const bt = perf.backtest
   const topk = perf.precision_at_topk
   return (
@@ -2641,41 +2417,750 @@ function BacktestSection({ perf }: { perf: PerformanceResponse }) {
   )
 }
 
+// ── 60d 오픈 포지션 섹션 ─────────────────────────────────────
+
+function Open60dSection({ onClickSymbol }: { onClickSymbol: (sym: string, name: string) => void }) {
+  const [data, setData] = useState<OpenSummaryResponse | null>(null)
+  useEffect(() => {
+    aiApi.openSummary().then(setData).catch(() => {})
+  }, [])
+  if (!data || data.count === 0) return null
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+      <h2 className="text-white font-semibold text-sm">60d 포지션 현황</h2>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {data.positions.slice(0, 6).map(p => (
+          <button
+            key={p.symbol}
+            onClick={() => onClickSymbol(p.symbol, p.name)}
+            className="bg-gray-800/60 rounded-lg px-3 py-2 text-left hover:bg-gray-700/60 transition-colors"
+          >
+            <p className="text-white text-xs font-medium truncate">{p.name}</p>
+            <p className="text-gray-400 text-xs">경과 {p.elapsed_days}일 · 잔여 {p.remaining_days}일</p>
+            {p.pnl_pct != null && (
+              <p className={`text-xs font-bold ${p.pnl_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {p.pnl_pct >= 0 ? '+' : ''}{p.pnl_pct.toFixed(1)}%
+              </p>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── 섹터 자금 흐름 카드 ──────────────────────────────────────
+
+function _momentumLabel(m: number | null): string {
+  if (m == null) return '—'
+  if (m > 0.5) return '지속 유입'
+  if (m > 0) return '반전 유입'
+  if (m > -0.5) return '반전 유출'
+  return '지속 유출'
+}
+
+function SectorFlowCard() {
+  const [data, setData] = useState<SectorFlowResponse | null>(null)
+  useEffect(() => {
+    screenerApi.sectorFlow().then(setData).catch(() => {})
+  }, [])
+  if (!data) return null
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+      <h2 className="text-white font-semibold text-sm">섹터 자금 흐름</h2>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {data.sectors.slice(0, 6).map(s => {
+          const label = _momentumLabel(s.momentum_5d)
+          const isIn = label === '지속 유입' || label === '반전 유입'
+          return (
+            <div key={s.code} className="bg-gray-800/60 rounded-lg px-3 py-2 space-y-0.5">
+              <p className="text-gray-200 text-xs font-medium truncate">{s.name}</p>
+              <p className={`text-xs font-semibold ${isIn ? 'text-emerald-400' : 'text-red-400'}`}>{label}</p>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── 프리셋 단축 버튼 ──────────────────────────────────────────
+
+const PRESET_SHORTCUTS = [
+  { label: '고배당+저PBR', keys: ['high_dividend', 'low_pbr'] },
+  { label: '고배당+저PER', keys: ['high_dividend', 'low_per'] },
+  { label: '저PBR+배당성장', keys: ['low_pbr', 'div_growth'] },
+  { label: '고배당+배당성장', keys: ['high_dividend', 'div_growth'] },
+]
+
+function PresetShortcuts({ onPresetSelect }: { onPresetSelect?: (keys: string[]) => void }) {
+  if (!onPresetSelect) return null
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+      <h2 className="text-white font-semibold text-sm">검증된 조합 바로가기</h2>
+      <div className="flex flex-wrap gap-2">
+        {PRESET_SHORTCUTS.map(p => (
+          <button
+            key={p.label}
+            onClick={() => onPresetSelect(p.keys)}
+            className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white border border-gray-700 rounded-lg px-3 py-1.5 transition-colors"
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── 시스템 상태 섹션 ──────────────────────────────────────────
+
+function SystemStatusSection({ health, livePerf }: { health: HealthResponse | null; livePerf: LivePerformanceResponse | null }) {
+  if (!health) return null
+  const slot5d = livePerf?.['5d']
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-white font-semibold text-sm">시스템 상태</h2>
+        {health.retrain_due && (
+          <span className="text-xs bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded-md px-2 py-0.5">재학습 권장</span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+        <div className="bg-gray-800/60 rounded-lg px-3 py-2 space-y-0.5">
+          <p className="text-gray-400">데이터 기준일</p>
+          <p className="text-white font-medium">{health.prices_latest_date ?? '—'}</p>
+          {health.prices_stale && <p className="text-amber-400">데이터 지연</p>}
+        </div>
+        {slot5d?.status === 'ready' && slot5d.value != null && (
+          <div className="bg-gray-800/60 rounded-lg px-3 py-2 space-y-0.5">
+            <p className="text-gray-400">5d 라이브 P@10</p>
+            <p className="text-white font-medium">{(slot5d.value * 100).toFixed(1)}%</p>
+            <p className="text-gray-500">n={slot5d.n}</p>
+          </div>
+        )}
+        <div className="bg-gray-800/60 rounded-lg px-3 py-2 space-y-0.5">
+          <p className="text-gray-400">모델</p>
+          <p className="text-white font-medium text-xs truncate">{health.model_dir ?? '—'}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── 관심 종목 섹션 ────────────────────────────────────────────
+
+interface WatchlistRowData {
+  symbol: string
+  name: string | null
+  close?: number | null
+  ret_20d?: number | null
+  per_pit?: number | null
+  pbr_pit?: number | null
+  score_60d?: number | null
+  dividend_yield?: number | null
+  foreign_rate?: number | null
+}
+
+function WatchlistSection({
+  items,
+  onToggle,
+  onSelect,
+}: {
+  items: import('../api/aiRecommend').WatchlistItem[]
+  onToggle?: (symbol: string, name: string) => void
+  onSelect?: (symbol: string) => void
+}) {
+  const [rowData, setRowData] = useState<Record<string, WatchlistRowData>>({})
+  const [loadingSymbols, setLoadingSymbols] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (items.length === 0) return
+    const missing = items.filter(w => !rowData[w.symbol])
+    if (missing.length === 0) return
+    setLoadingSymbols(prev => new Set([...prev, ...missing.map(w => w.symbol)]))
+    Promise.allSettled(
+      missing.map(w =>
+        screenerApi.symbolProfile(w.symbol).then(p => {
+          const s = p.stock
+          setRowData(prev => ({
+            ...prev,
+            [w.symbol]: {
+              symbol: s.symbol,
+              name: s.name,
+              close: s.close,
+              ret_20d: s.ret_20d,
+              per_pit: s.per_pit,
+              pbr_pit: s.pbr_pit,
+              score_60d: s.score_60d,
+              dividend_yield: s.dividend_yield,
+              foreign_rate: s.foreign_rate,
+            },
+          }))
+          setLoadingSymbols(prev => { const n = new Set(prev); n.delete(w.symbol); return n })
+        }).catch(() => {
+          setLoadingSymbols(prev => { const n = new Set(prev); n.delete(w.symbol); return n })
+        })
+      )
+    )
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map(w => w.symbol).join(',')])
+
+  if (items.length === 0) return null
+
+  const fmt = (v: number | null | undefined, digits = 2, suffix = '') =>
+    v == null ? '—' : `${v.toFixed(digits)}${suffix}`
+  const fmtPct = (v: number | null | undefined) =>
+    v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-white font-semibold text-sm">★ 관심 종목</h2>
+        <span className="text-gray-500 text-xs">{items.length}종목</span>
+      </div>
+      <div className="overflow-x-auto -mx-1">
+        <table className="w-full text-xs min-w-[640px]">
+          <thead>
+            <tr className="text-gray-500 border-b border-gray-800">
+              <th className="text-left py-1.5 px-2 font-normal">종목명</th>
+              <th className="text-right py-1.5 px-2 font-normal">현재가</th>
+              <th className="text-right py-1.5 px-2 font-normal">20일수익</th>
+              <th className="text-right py-1.5 px-2 font-normal">PER</th>
+              <th className="text-right py-1.5 px-2 font-normal">PBR</th>
+              <th className="text-right py-1.5 px-2 font-normal">60d점수</th>
+              <th className="text-right py-1.5 px-2 font-normal">배당수익률</th>
+              <th className="text-right py-1.5 px-2 font-normal">외국인</th>
+              <th className="text-right py-1.5 px-2 font-normal w-6"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(w => {
+              const d = rowData[w.symbol]
+              const isLoading = loadingSymbols.has(w.symbol)
+              const r20 = d?.ret_20d
+              return (
+                <tr
+                  key={w.symbol}
+                  className="border-b border-gray-800/50 hover:bg-gray-800/40 transition-colors cursor-pointer"
+                  onClick={() => onSelect?.(w.symbol)}
+                >
+                  <td className="py-2 px-2">
+                    <div className="flex flex-col">
+                      <span className="text-white font-medium">{d?.name ?? w.name ?? w.symbol}</span>
+                      <span className="text-gray-500">{w.symbol}</span>
+                    </div>
+                  </td>
+                  <td className="py-2 px-2 text-right">
+                    {isLoading
+                      ? <span className="text-gray-600">…</span>
+                      : <span className="text-white">{d?.close != null ? d.close.toLocaleString() : '—'}</span>
+                    }
+                  </td>
+                  <td className="py-2 px-2 text-right">
+                    {isLoading
+                      ? <span className="text-gray-600">…</span>
+                      : <span className={r20 == null ? 'text-gray-500' : r20 >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                          {fmtPct(r20)}
+                        </span>
+                    }
+                  </td>
+                  <td className="py-2 px-2 text-right text-gray-300">{isLoading ? '…' : fmt(d?.per_pit)}</td>
+                  <td className="py-2 px-2 text-right text-gray-300">{isLoading ? '…' : fmt(d?.pbr_pit)}</td>
+                  <td className="py-2 px-2 text-right">
+                    {isLoading ? <span className="text-gray-600">…</span>
+                      : d?.score_60d != null
+                        ? <span className="text-teal-400">{d.score_60d.toFixed(2)}</span>
+                        : <span className="text-gray-500">—</span>
+                    }
+                  </td>
+                  <td className="py-2 px-2 text-right text-gray-300">{isLoading ? '…' : fmt(d?.dividend_yield, 1, '%')}</td>
+                  <td className="py-2 px-2 text-right text-gray-300">{isLoading ? '…' : fmt(d?.foreign_rate, 1, '%')}</td>
+                  <td className="py-2 px-2 text-right">
+                    <button
+                      onClick={e => { e.stopPropagation(); onToggle?.(w.symbol, d?.name ?? w.name ?? w.symbol) }}
+                      title="관심 종목 해제"
+                      className="text-yellow-400 hover:text-gray-400 transition-colors text-base leading-none"
+                    >
+                      ★
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ── 시그널 로그 섹션 ───────────────────────────────────────────
+
+const EVENT_META: Record<string, { label: string; icon: string; color: string }> = {
+  foreign_surge:         { label: '외국인급변', icon: '🌍', color: 'text-blue-400 bg-blue-900/30 border-blue-800/50' },
+  score60d_entry:        { label: '60d진입',   icon: '📈', color: 'text-teal-400 bg-teal-900/30 border-teal-800/50' },
+  watchlist_price_jump:  { label: '관심급변',  icon: '⚡', color: 'text-yellow-400 bg-yellow-900/30 border-yellow-800/50' },
+  sector_quadrant:       { label: '섹터전환',  icon: '🔀', color: 'text-purple-400 bg-purple-900/30 border-purple-800/50' },
+  position_event:        { label: '포지션',    icon: '📋', color: 'text-orange-400 bg-orange-900/30 border-orange-800/50' },
+}
+
+function SignalLogSection({ onSelect }: { onSelect?: (symbol: string) => void }) {
+  const [signals, setSignals] = useState<SignalLog[]>([])
+  const [loading, setLoading] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+    setLoading(true)
+    signalsApi.list(7).then(d => { setSignals(d); setLoading(false) }).catch(() => setLoading(false))
+  }, [])
+
+  const loadMore = () => {
+    setExpanded(true)
+    setLoading(true)
+    signalsApi.list(30).then(d => { setSignals(d); setLoading(false) }).catch(() => setLoading(false))
+  }
+
+  if (!mounted || (signals.length === 0 && !loading)) return null
+
+  // 날짜별 그룹핑
+  const grouped: Record<string, SignalLog[]> = {}
+  for (const s of signals) {
+    const day = s.created_at.slice(0, 10)
+    if (!grouped[day]) grouped[day] = []
+    grouped[day].push(s)
+  }
+  const days = Object.keys(grouped).sort().reverse()
+
+  const fmtDay = (d: string) => {
+    const date = new Date(d)
+    const m = date.getMonth() + 1, day = date.getDate()
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토']
+    return `${m}/${day} (${dayNames[date.getDay()]})`
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-white font-semibold text-sm">🔔 시그널 로그</h2>
+        <span className="text-gray-500 text-xs">{expanded ? '최근 30일' : '최근 7일'}</span>
+      </div>
+
+      {loading && signals.length === 0 && (
+        <div className="text-gray-500 text-xs text-center py-3">로딩 중...</div>
+      )}
+
+      {!loading && signals.length === 0 && (
+        <div className="text-gray-600 text-xs text-center py-3">감지된 시그널 없음</div>
+      )}
+
+      <div className="space-y-4">
+        {days.map(day => (
+          <div key={day}>
+            <div className="text-gray-500 text-xs font-medium mb-1.5">{fmtDay(day)}</div>
+            <div className="space-y-1.5">
+              {grouped[day].map(sig => {
+                const meta = EVENT_META[sig.event_type] ?? { label: sig.event_type, icon: '📌', color: 'text-gray-400 bg-gray-800/50 border-gray-700/50' }
+                const time = sig.created_at.slice(11, 16)
+                return (
+                  <div
+                    key={sig.id}
+                    className={`flex items-start gap-2 text-xs border rounded-lg px-2.5 py-1.5 ${meta.color}`}
+                  >
+                    <span className="shrink-0 mt-0.5">{meta.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <span
+                        className={`text-[10px] font-medium mr-1.5 opacity-70`}
+                      >{meta.label}</span>
+                      <span
+                        className={sig.ticker && onSelect ? 'cursor-pointer underline-offset-2 hover:underline' : ''}
+                        onClick={() => sig.ticker && onSelect && onSelect(sig.ticker)}
+                      >
+                        {sig.message}
+                      </span>
+                    </div>
+                    <span className="text-[10px] opacity-40 shrink-0">{time}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {!expanded && signals.length > 0 && (
+        <button
+          onClick={loadMore}
+          className="w-full text-xs text-gray-500 hover:text-gray-300 py-1 transition-colors"
+        >
+          더 보기 (30일) ▾
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── 캘린더 섹션 ───────────────────────────────────────────────
+
+const CAL_COLOR_MAP: Record<string, string> = {
+  blue:   'bg-blue-500',
+  orange: 'bg-orange-500',
+  green:  'bg-green-500',
+  red:    'bg-red-500',
+  purple: 'bg-purple-500',
+}
+
+const CAL_TYPE_LABEL: Record<string, string> = {
+  position_entry:   '포지션 진입',
+  position_expiry:  '포지션 만기',
+  dividend_record:  '배당기준일',
+  dividend_exdate:  '배당락일',
+  signal_event:     '시그널',
+  system_schedule:  '시스템 일정',
+}
+
+// ── 포트폴리오 상관관계 히트맵 ──────────────────────────────────────────────
+function CorrelationSection({ onSelect }: { onSelect?: (symbol: string) => void }) {
+  const [data, setData] = useState<CorrelationResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [guideOpen, setGuideOpen] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    portfolioApi.correlation()
+      .then(d => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  function interpretation(avg: number | null) {
+    if (avg === null) return null
+    if (avg >= 0.7) return { text: '⚠️ 높은 상관 — 분산 효과 제한적', cls: 'text-red-400' }
+    if (avg >= 0.3) return { text: '🔄 적절한 분산', cls: 'text-yellow-400' }
+    return { text: '✅ 좋은 분산 — 독립적 움직임', cls: 'text-green-400' }
+  }
+
+  if (loading) return (
+    <div className="mt-4 p-4 bg-gray-800 rounded-xl text-gray-400 text-sm">상관관계 계산 중…</div>
+  )
+
+  if (!data || data.symbols.length < 2) return (
+    <div className="mt-4 p-4 bg-gray-800 rounded-xl text-gray-500 text-sm">
+      현재 보유 포지션 없음 (60d 상관관계 표시 불가)
+    </div>
+  )
+
+  const { symbols, names, matrix, avg_correlation, trading_days_used } = data
+  const interp = interpretation(avg_correlation)
+  const fullName = (sym: string) => names[sym] || sym
+
+  const handleSymClick = (sym: string) => {
+    if (onSelect) onSelect(sym)
+  }
+
+  return (
+    <div className="mt-4 p-4 bg-gray-800 rounded-xl">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-semibold text-gray-200">📊 포트폴리오 상관관계</h3>
+        {trading_days_used && (
+          <span className="text-xs text-gray-500">최근 {trading_days_used}거래일 기준</span>
+        )}
+      </div>
+
+      {/* 히트맵 매트릭스 — table-fixed + w-full로 영역 꽉 채우기 */}
+      <div className="overflow-x-auto">
+        <table className="table-fixed w-full border-separate border-spacing-1 text-xs">
+          <colgroup>
+            <col style={{ width: '22%' }} />
+            {symbols.map(sym => <col key={sym} />)}
+          </colgroup>
+          <thead>
+            <tr>
+              <th />
+              {symbols.map(sym => (
+                <th key={sym} className="pb-2 text-center font-normal align-bottom">
+                  <span
+                    onClick={() => handleSymClick(sym)}
+                    className={`text-gray-300 leading-tight break-keep${onSelect ? ' cursor-pointer hover:text-teal-400 transition-colors' : ''}`}
+                    style={{ display: 'block' }}
+                  >
+                    {fullName(sym)}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {symbols.map((rowSym, i) => (
+              <tr key={rowSym}>
+                <td className="pr-3 text-right align-middle">
+                  <span
+                    onClick={() => handleSymClick(rowSym)}
+                    className={`text-gray-300 leading-tight break-keep${onSelect ? ' cursor-pointer hover:text-teal-400 transition-colors' : ''}`}
+                  >
+                    {fullName(rowSym)}
+                  </span>
+                </td>
+                {symbols.map((colSym, j) => {
+                  const r = matrix[i][j]
+                  const isDiag = i === j
+                  const bgStyle = isDiag
+                    ? { backgroundColor: 'rgba(75,85,99,0.6)' }
+                    : r >= 0
+                      ? { backgroundColor: `rgba(239,68,68,${Math.min(r, 1).toFixed(2)})` }
+                      : { backgroundColor: `rgba(59,130,246,${Math.min(Math.abs(r), 1).toFixed(2)})` }
+                  const textCls = isDiag
+                    ? 'text-gray-500'
+                    : Math.abs(r) > 0.55
+                      ? 'text-white font-bold'
+                      : 'text-gray-200'
+                  return (
+                    <td
+                      key={colSym}
+                      className={`h-14 text-center align-middle rounded-lg ${textCls}`}
+                      style={bgStyle}
+                    >
+                      {isDiag ? '—' : isNaN(r) ? 'N/A' : r.toFixed(2)}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 평균 상관계수 + 해석 */}
+      {avg_correlation !== null && (
+        <div className="mt-4 pt-3 border-t border-gray-700 flex flex-wrap items-center gap-3">
+          <span className="text-xs text-gray-400">평균 상관계수</span>
+          <span className="text-base font-bold text-white">{avg_correlation.toFixed(2)}</span>
+          {interp && <span className={`text-xs ${interp.cls}`}>{interp.text}</span>}
+          <button
+            onClick={() => setGuideOpen(v => !v)}
+            className="ml-auto text-xs text-gray-500 hover:text-gray-300 transition-colors flex items-center gap-1"
+          >
+            <span className="w-4 h-4 rounded-full border border-gray-600 inline-flex items-center justify-center text-[10px] leading-none">?</span>
+            해석 가이드
+            <span className="text-[10px]">{guideOpen ? '▴' : '▾'}</span>
+          </button>
+        </div>
+      )}
+
+      {/* 접힌 해석 가이드 */}
+      {guideOpen && (
+        <div className="mt-3 p-3 bg-gray-700/50 rounded-lg text-xs text-gray-300 leading-relaxed">
+          숫자는 두 종목이 최근 60거래일간 얼마나 같은 방향으로 움직였는지를 나타냅니다.
+          1.0에 가까울수록 같이 오르고 같이 떨어지며 (분산 효과 ↓),
+          0에 가까울수록 독립적으로 움직입니다 (분산 효과 ↑).
+          동일 섹터 종목은 상관이 높은 경향이 있어 포지션 구성 시 참고하세요.
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CalendarSection({ onSelect }: { onSelect?: (symbol: string) => void }) {
+  const today = new Date()
+  const [curYear, setCurYear] = useState(today.getFullYear())
+  const [curMonth, setCurMonth] = useState(today.getMonth() + 1)
+  const [events, setEvents] = useState<CalendarEvent[]>([])
+  const [loading, setLoading] = useState(false)
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    calendarApi.events(curYear, curMonth)
+      .then(d => { setEvents(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [curYear, curMonth])
+
+  const prevMonth = () => {
+    if (curMonth === 1) { setCurYear(y => y - 1); setCurMonth(12) }
+    else setCurMonth(m => m - 1)
+  }
+  const nextMonth = () => {
+    if (curMonth === 12) { setCurYear(y => y + 1); setCurMonth(1) }
+    else setCurMonth(m => m + 1)
+  }
+
+  // 달력 그리드 계산
+  const firstWeekday = new Date(curYear, curMonth - 1, 1).getDay() // 0=일
+  const daysInMonth = new Date(curYear, curMonth, 0).getDate()
+  const cells: (number | null)[] = [
+    ...Array(firstWeekday).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ]
+  // 6행 맞추기
+  while (cells.length % 7 !== 0) cells.push(null)
+
+  // 날짜별 이벤트 맵
+  const eventMap: Record<string, CalendarEvent[]> = {}
+  for (const ev of events) {
+    if (!eventMap[ev.date]) eventMap[ev.date] = []
+    eventMap[ev.date].push(ev)
+  }
+
+  const toDateKey = (d: number) =>
+    `${curYear}${String(curMonth).padStart(2, '0')}${String(d).padStart(2, '0')}`
+
+  const todayKey = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토']
+
+  const selectedEvents = selectedDate ? (eventMap[selectedDate] ?? []) : []
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-white font-semibold text-sm">📅 캘린더</h2>
+        <div className="flex items-center gap-2">
+          <button onClick={prevMonth} className="text-gray-400 hover:text-white text-xs px-1">◀</button>
+          <span className="text-gray-300 text-xs font-medium w-20 text-center">
+            {curYear}년 {curMonth}월
+          </span>
+          <button onClick={nextMonth} className="text-gray-400 hover:text-white text-xs px-1">▶</button>
+          <button
+            onClick={() => { setCurYear(today.getFullYear()); setCurMonth(today.getMonth() + 1); setSelectedDate(null) }}
+            className="text-gray-500 hover:text-gray-300 text-[10px] ml-1"
+          >오늘</button>
+        </div>
+      </div>
+
+      {loading && <div className="text-gray-500 text-xs text-center py-4">로딩 중...</div>}
+
+      {!loading && (
+        <>
+          {/* 범례 */}
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {[
+              ['blue', '진입'],
+              ['orange', '만기'],
+              ['green', '배당'],
+              ['red', '시그널'],
+              ['purple', '시스템'],
+            ].map(([color, label]) => (
+              <span key={color} className="flex items-center gap-1 text-[10px] text-gray-400">
+                <span className={`w-2 h-2 rounded-full ${CAL_COLOR_MAP[color]}`} />
+                {label}
+              </span>
+            ))}
+          </div>
+
+          {/* 요일 헤더 */}
+          <div className="grid grid-cols-7 gap-0.5 text-center">
+            {dayNames.map((d, i) => (
+              <div key={d} className={`text-[10px] font-medium pb-1 ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-500'}`}>
+                {d}
+              </div>
+            ))}
+            {/* 날짜 셀 */}
+            {cells.map((d, i) => {
+              if (d === null) return <div key={`e${i}`} />
+              const key = toDateKey(d)
+              const dayEvents = eventMap[key] ?? []
+              const isToday = key === todayKey
+              const isSel = key === selectedDate
+              const wday = (firstWeekday + d - 1) % 7
+              return (
+                <button
+                  key={key}
+                  onClick={() => setSelectedDate(isSel ? null : key)}
+                  className={`relative flex flex-col items-center rounded-lg py-1 transition-colors
+                    ${isSel ? 'bg-gray-700' : 'hover:bg-gray-800'}
+                    ${isToday ? 'ring-1 ring-emerald-500' : ''}`}
+                >
+                  <span className={`text-[11px] font-medium leading-tight
+                    ${isToday ? 'text-emerald-400' : wday === 0 ? 'text-red-400' : wday === 6 ? 'text-blue-400' : 'text-gray-300'}`}
+                  >
+                    {d}
+                  </span>
+                  {/* 이벤트 도트 (최대 3개) */}
+                  {dayEvents.length > 0 && (
+                    <div className="flex gap-0.5 mt-0.5 flex-wrap justify-center max-w-full">
+                      {dayEvents.slice(0, 3).map((ev, ei) => (
+                        <span key={ei} className={`w-1.5 h-1.5 rounded-full ${CAL_COLOR_MAP[ev.color]}`} />
+                      ))}
+                      {dayEvents.length > 3 && <span className="text-[8px] text-gray-500">+{dayEvents.length - 3}</span>}
+                    </div>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* 선택된 날짜 이벤트 목록 */}
+          {selectedDate && (
+            <div className="border-t border-gray-800 pt-3 space-y-1.5">
+              <div className="text-gray-400 text-xs font-medium">
+                {parseInt(selectedDate.slice(4, 6))}월 {parseInt(selectedDate.slice(6, 8))}일 일정
+                {selectedEvents.length === 0 && <span className="text-gray-600 ml-2">없음</span>}
+              </div>
+              {selectedEvents.map((ev, i) => (
+                <div
+                  key={i}
+                  className={`flex items-start gap-2 text-xs rounded-lg px-2.5 py-1.5 border
+                    ${ev.color === 'blue'   ? 'text-blue-300 bg-blue-900/30 border-blue-800/50' :
+                      ev.color === 'orange' ? 'text-orange-300 bg-orange-900/30 border-orange-800/50' :
+                      ev.color === 'green'  ? 'text-green-300 bg-green-900/30 border-green-800/50' :
+                      ev.color === 'red'    ? 'text-red-300 bg-red-900/30 border-red-800/50' :
+                                             'text-purple-300 bg-purple-900/30 border-purple-800/50'}`}
+                >
+                  <span className="text-[10px] opacity-60 shrink-0 mt-0.5 whitespace-nowrap">
+                    {CAL_TYPE_LABEL[ev.type] ?? ev.type}
+                  </span>
+                  <span
+                    className={ev.ticker && onSelect ? 'cursor-pointer hover:underline underline-offset-2 flex-1' : 'flex-1'}
+                    onClick={() => ev.ticker && onSelect && onSelect(ev.ticker)}
+                  >
+                    {ev.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── 메인 페이지 ───────────────────────────────────────────────
 
-export default function AIRecommendPage({ embedded = false }: { embedded?: boolean } = {}) {
+export default function AIRecommendPage({ embedded = false, onPresetSelect: _onPresetSelect, watchlistItems, onToggleWatchlist, onWatchlistStockSelect }: { embedded?: boolean; onPresetSelect?: (keys: string[]) => void; watchlistItems?: WatchlistItem[]; onToggleWatchlist?: (symbol: string, name: string) => void; onWatchlistStockSelect?: (symbol: string) => void } = {}) {
   const navigate = useNavigate()
   const [predictions, setPredictions] = useState<PredictionWithMeta[]>([])
   const [volSurge, setVolSurge] = useState<PredictionWithMeta[]>([])
   const [perf, setPerf] = useState<PerformanceResponse | null>(null)
   const [market, setMarket] = useState<MarketTrend | null>(null)
-  const [summary, setSummary] = useState<DailySummary | null>(null)
+  const [_summary, setSummary] = useState<DailySummary | null>(null)
   const [date, setDate] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [names, setNames] = useState<Record<string, string>>({})
+  const [_names, setNames] = useState<Record<string, string>>({})
 
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchHits, setSearchHits] = useState<SearchResult[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchQuery, _setSearchQuery] = useState('')
+  const [_searchHits, setSearchHits] = useState<SearchResult[]>([])
+  const [_searchLoading, setSearchLoading] = useState(false)
 
-  const [showWatchlistOnly, setShowWatchlistOnly] = useState(false)
-  const [watchlist, setWatchlist] = useState<string[]>(() => getWatchlist())
-  const [watchlistExtras, setWatchlistExtras] = useState<PredictionWithMeta[]>([])
-  const [watchlistLoading, setWatchlistLoading] = useState(false)
-  const [excluded, setExcluded] = useState<ExcludedStock[]>([])
-  const [marketMode, setMarketMode] = useState<string>('aggressive')
-  const [marketMessage, setMarketMessage] = useState<string>('')
-  const [volatilityRegime, setVolatilityRegime] = useState<VolatilityRegime | null>(null)
-  const [reanalysisInfo, setReanalysisInfo] = useState<{ available: boolean; generated_at?: string } | null>(null)
+  const [showWatchlistOnly, _setShowWatchlistOnly] = useState(false)
+  const [watchlist, _setWatchlist] = useState<string[]>(() => getWatchlist())
+  const [watchlistExtras, _setWatchlistExtras] = useState<PredictionWithMeta[]>([])
+  const [_watchlistLoading, _setWatchlistLoading] = useState(false)
+  const [_excluded, setExcluded] = useState<ExcludedStock[]>([])
+  const [_marketMode, setMarketMode] = useState<string>('aggressive')
+  const [_marketMessage, setMarketMessage] = useState<string>('')
+  const [_volatilityRegime, setVolatilityRegime] = useState<VolatilityRegime | null>(null)
+  const [_reanalysisInfo, setReanalysisInfo] = useState<{ available: boolean; generated_at?: string } | null>(null)
   const [health, setHealth] = useState<HealthResponse | null>(null)
+  const [livePerf, setLivePerf] = useState<LivePerformanceResponse | null>(null)
 
-  const [showRerank, setShowRerank] = useState(false)
-  const [confDist, setConfDist] = useState<Record<string, number>>({})
-  const [riskDist, setRiskDist] = useState<Record<string, number>>({})
+  const [_confDist, setConfDist] = useState<Record<string, number>>({})
+  const [_riskDist, setRiskDist] = useState<Record<string, number>>({})
 
-  const [compareList, setCompareList] = useState<string[]>([])
-  const [compareDetails, setCompareDetails] = useState<Record<string, TickerDetail | null>>({})
+  const [_compareList, _setCompareList] = useState<string[]>([])
+  const [_compareDetails, _setCompareDetails] = useState<Record<string, TickerDetail | null>>({})
 
 
   const [modalSymbol, setModalSymbol] = useState<string | null>(null)
@@ -2713,6 +3198,8 @@ export default function AIRecommendPage({ embedded = false }: { embedded?: boole
         aiApi.reanalysisStatus().then(s => { if (!cancelled) setReanalysisInfo(s) }).catch(() => {})
         // 서버 상태 배너용 (비차단)
         aiApi.health().then(h => { if (!cancelled) setHealth(h) }).catch(() => {})
+        // 라이브 성과 (비차단)
+        aiApi.livePerformance().then(lp => { if (!cancelled) setLivePerf(lp) }).catch(() => {})
 
         const initial: PredictionWithMeta[] = todayResp.predictions.map(p => ({ ...p, sparkline: [] }))
         setPredictions(initial)
@@ -2762,42 +3249,6 @@ export default function AIRecommendPage({ embedded = false }: { embedded?: boole
     return () => { cancelled = true }
   }, [])
 
-  // ── 비교 종목 상세 로드 ──
-  const toggleCompare = useCallback(async (sym: string) => {
-    const code = normalizeSymbol(sym)
-    setCompareList(prev => {
-      if (prev.includes(code)) return prev.filter(s => s !== code)
-      if (prev.length >= 6) return prev
-      return [...prev, code]
-    })
-    // 이름이 없거나 code와 동일(미로드)이면 다시 fetch → 실패 시 검색 API fallback
-    if (!names[code] || names[code] === code || names[code] === sym) {
-      fetchQuote(code)
-        .then(q => {
-          const n = q.shortName && q.shortName !== code && q.shortName !== sym ? q.shortName : null
-          if (n) { setNames(prev => ({ ...prev, [code]: n })); return }
-          return searchSymbols(code).then(hits => {
-            const hit = hits.find(h => normalizeSymbol(h.symbol) === code)
-            if (hit?.shortname) setNames(prev => ({ ...prev, [code]: hit.shortname }))
-          })
-        })
-        .catch(() =>
-          searchSymbols(code).then(hits => {
-            const hit = hits.find(h => normalizeSymbol(h.symbol) === code)
-            if (hit?.shortname) setNames(prev => ({ ...prev, [code]: hit.shortname }))
-          }).catch(() => {})
-        )
-    }
-    if (!compareDetails[code]) {
-      try {
-        const d = await aiApi.ticker(code)
-        setCompareDetails(prev => ({ ...prev, [code]: d }))
-      } catch {
-        setCompareDetails(prev => ({ ...prev, [code]: null }))
-      }
-    }
-  }, [compareDetails, names])
-
   // ── 검색 ──
   // AI 추천 풀(일반 + 거래량급등 하위 그리드)을 하나의 관심종목 목록으로 통합.
   // predictions/volSurge는 각각 내부적으로는 확률 내림차순이지만 두 배열을 단순
@@ -2843,51 +3294,7 @@ export default function AIRecommendPage({ embedded = false }: { embedded?: boole
     catch (e) { setDetailError((e as Error).message) }
     finally { setDetailLoading(false) }
   }
-  const openModal = (pred: PredictionWithMeta) => openModalForSymbol(pred.symbol, pred.name)
   const closeModal = () => { setModalSymbol(null); setDetail(null); setDetailError(null) }
-
-  const refreshWatchlist = () => setWatchlist(getWatchlist())
-
-  const handleWatchlistToggle = useCallback(async () => {
-    const turningOn = !showWatchlistOnly
-    setShowWatchlistOnly(turningOn)
-    const wl = getWatchlist()
-    setWatchlist(wl)
-
-    if (!turningOn) { setWatchlistExtras([]); return }
-
-    // 관심종목 목록(AI 추천 풀)에 없는 종목만 별도 API 호출
-    const predSymbols = new Set(
-      [...predictions, ...volSurge].map(p => normalizeSymbol(p.symbol))
-    )
-    const missing = wl.filter(s => !predSymbols.has(normalizeSymbol(s)))
-    if (missing.length === 0) return
-
-    setWatchlistLoading(true)
-    const settled = await Promise.allSettled(missing.map(s => aiApi.ticker(s)))
-    const extras: PredictionWithMeta[] = []
-    settled.forEach((r, i) => {
-      if (r.status !== 'fulfilled') return
-      const d = r.value
-      extras.push({
-        rank: d.rank ?? 9999,
-        symbol: missing[i],
-        probability: d.probability,
-        probability_calibrated: d.probability_calibrated,
-        shap_top: d.shap_full.slice(0, 6),
-        name: missing[i],
-        sparkline: d.price_history.slice(-30).map(p => p.close),
-      })
-    })
-    setWatchlistExtras(extras)
-    setWatchlistLoading(false)
-
-    extras.forEach(p => {
-      fetchQuote(p.symbol).then(q => {
-        setWatchlistExtras(prev => prev.map(x => x.symbol === p.symbol ? { ...x, name: q.shortName } : x))
-      }).catch(() => {})
-    })
-  }, [showWatchlistOnly, predictions, volSurge])
 
   // ── 렌더 ──
   return (
@@ -2961,348 +3368,33 @@ export default function AIRecommendPage({ embedded = false }: { embedded?: boole
             {/* 시장 배너 */}
             {market && <MarketBanner market={market} />}
 
-            {/* 일일 요약 */}
-            {summary && <DailySummaryCard summary={summary} names={names} onClickSymbol={openModalForSymbol} volSurgeSymbols={new Set(volSurge.map(v => v.symbol))} />}
+            {/* 60d 오픈 포지션 */}
+            <Open60dSection onClickSymbol={openModalForSymbol} />
 
-            {/* 백테스트 */}
-            {perf && <BacktestSection perf={perf} />}
+            {/* 섹터 자금 흐름 */}
+            <SectorFlowCard />
 
-            {/* 공시 위험 제외 종목 */}
-            <ExcludedSection excluded={excluded} names={names} onClickSymbol={openModalForSymbol} />
-
-            {/* 공시 재순위 */}
-            {excluded.length > 0 && (() => {
-              const eligible = excluded.filter(ex => ex.analysis?.rerank_eligible && ex.rank != null)
-              if (eligible.length === 0) return null
-
-              const merged = [
-                ...predictions.map(p => ({ type: 'safe' as const, rank: p.rank, pred: p, ex: null as ExcludedStock | null })),
-                ...eligible.map(ex => ({ type: 'risky' as const, rank: ex.rank!, pred: null as PredictionWithMeta | null, ex })),
-              ].sort((a, b) => a.rank - b.rank)
-
-              return (
-                <div className="bg-gray-900 border border-gray-700/50 rounded-xl overflow-hidden">
-                  <button
-                    onClick={() => setShowRerank(o => !o)}
-                    className="w-full flex items-center justify-between px-5 py-3 hover:bg-gray-800/40 transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-400 text-sm">⚡</span>
-                      <span className="text-gray-200 font-medium text-sm">
-                        공시 포함 재순위 — {eligible.length}종목 주의 등급 편입
-                      </span>
-                      <span className="text-gray-500 text-xs hidden sm:block">— 위험 감수 시 참고용</span>
-                    </div>
-                    <svg className={`w-4 h-4 text-gray-400 transition-transform ${showRerank ? 'rotate-180' : ''}`}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-
-                  {showRerank && (
-                    <div className="border-t border-gray-800">
-                      <p className="px-5 py-2 text-xs text-gray-500">
-                        공시 필터를 제외하고 AI 확률 순위만 기준으로 재배열한 결과입니다. 매수 전 반드시 공시 원문을 확인하세요.
-                      </p>
-                      <div className="divide-y divide-gray-800/40">
-                      {merged.map(item => {
-                        if (item.type === 'safe' && item.pred) {
-                          const p = item.pred
-                          const pct = Math.round(displayProb(p) * 100)
-                          const { label, stars, cls } = signalInfo(displayProb(p))
-                          const safeCode = normalizeSymbol(p.symbol)
-                          const safeInCmp = compareList.includes(safeCode)
-                          return (
-                            <div
-                              key={p.symbol}
-                              onClick={() => openModalForSymbol(p.symbol, p.name)}
-                              className="px-5 py-3 hover:bg-gray-800/30 transition-colors cursor-pointer space-y-2"
-                            >
-                              {/* 1행: 순위 + 이름 + 정상 배지 + 확률 + 비교 */}
-                              <div className="flex items-center gap-2">
-                                <span className="text-gray-500 text-xs font-mono shrink-0">#{item.rank}</span>
-                                <span className="text-white text-sm font-semibold truncate flex-1">{p.name}</span>
-                                <span className="text-gray-500 text-xs shrink-0">{safeCode}</span>
-                                <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">✓ 정상 추천</span>
-                                <span className={`text-sm font-bold shrink-0 ${pct >= 75 ? 'text-emerald-400' : pct >= 60 ? 'text-green-400' : 'text-gray-300'}`}>{pct}%</span>
-                                <button
-                                  onClick={e => { e.stopPropagation(); toggleCompare(safeCode) }}
-                                  disabled={!safeInCmp && compareList.length >= 6}
-                                  className={`shrink-0 text-xs px-2 py-0.5 rounded border transition-colors ${
-                                    safeInCmp ? 'bg-indigo-500/30 border-indigo-500/40 text-indigo-300'
-                                    : compareList.length >= 6 ? 'border-gray-700 text-gray-700 cursor-not-allowed'
-                                    : 'border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
-                                  }`}
-                                >{safeInCmp ? '비교 ✓' : '비교'}</button>
-                              </div>
-                              {/* 2행: 신호강도 + 확률 바 */}
-                              <div className="flex items-center gap-3">
-                                <span className={`text-xs font-medium shrink-0 ${cls}`}>{label} {'★'.repeat(stars)}{'☆'.repeat(5 - stars)}</span>
-                                <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                                  <div className={`h-full rounded-full ${pct >= 75 ? 'bg-emerald-500' : pct >= 60 ? 'bg-green-500/80' : 'bg-emerald-700/60'}`}
-                                    style={{ width: `${pct}%` }} />
-                                </div>
-                              </div>
-                              {/* 3행: SHAP 칩 + 전략 */}
-                              <div className="flex items-center gap-2 flex-wrap">
-                                {p.shap_top.slice(0, 3).map((s, i) => <ShapChip key={i} entry={s} />)}
-                                {p.strategy && (
-                                  <div className="ml-auto shrink-0">
-                                    <BadgeTooltip text={ACTION_HINTS[p.strategy.action_label] ?? p.strategy.action_label}>
-                                      <span className={`text-xs font-semibold cursor-default ${
-                                        p.strategy.action_label === '관망 권장' ? 'text-red-400' :
-                                        p.strategy.action_label === '신중 진입' ? 'text-yellow-400' : 'text-emerald-400'
-                                      }`}>{p.strategy.action_label}</span>
-                                    </BadgeTooltip>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )
-                        }
-                        const ex = item.ex!
-                        const code = normalizeSymbol(ex.symbol)
-                        const exName = names[code] ?? '—'
-                        const a = ex.analysis!
-                        const sty = SEVERITY_STYLES[a.severity] ?? SEVERITY_STYLES.high
-                        const riskyInCmp = compareList.includes(code)
-                        return (
-                          <div
-                            key={ex.symbol}
-                            onClick={() => openModalForSymbol(code, exName)}
-                            className="px-5 py-3 hover:bg-gray-800/30 transition-colors cursor-pointer space-y-2"
-                          >
-                            {/* 1행: 순위 + 이름 + 심각도 배지 + 비교 */}
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-gray-500 text-xs font-mono shrink-0">#{item.rank}</span>
-                              <span className="text-white text-sm font-semibold truncate flex-1">{exName}</span>
-                              <span className="text-gray-500 text-xs shrink-0">{code}</span>
-                              <span className={`text-xs px-1.5 py-0.5 rounded font-semibold shrink-0 ${sty.badge}`}>
-                                {a.severity_label}
-                              </span>
-                              <button
-                                onClick={e => { e.stopPropagation(); toggleCompare(code) }}
-                                disabled={!riskyInCmp && compareList.length >= 6}
-                                className={`shrink-0 text-xs px-2 py-0.5 rounded border transition-colors ${
-                                  riskyInCmp ? 'bg-indigo-500/30 border-indigo-500/40 text-indigo-300'
-                                  : compareList.length >= 6 ? 'border-gray-700 text-gray-700 cursor-not-allowed'
-                                  : 'border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
-                                }`}
-                              >{riskyInCmp ? '비교 ✓' : '비교'}</button>
-                            </div>
-                            {/* 2행: 키워드 + 방향/등락 */}
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {ex.risks.map((r, i) => (
-                                <span key={i} className="text-xs bg-orange-500/15 text-orange-300 border border-orange-500/30 px-1.5 py-0.5 rounded font-medium">
-                                  {r.matched_keyword}
-                                </span>
-                              ))}
-                              <span className={`text-xs font-medium shrink-0 ${sty.accent}`}>{a.direction}</span>
-                              <span className="text-xs text-gray-400 shrink-0">{a.range}</span>
-                              <span className="text-xs text-gray-500 shrink-0">· {a.timing}</span>
-                            </div>
-                            {/* 3행: 분석 요약 */}
-                            <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">{a.analysis}</p>
-                          </div>
-                        )
-                      })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
-
-
-            {/* 거래량 이상 급등 스캐너 */}
-            <VolumeAnomalySection
-              onClickSymbol={openModalForSymbol}
-              watchlist={watchlist}
-              onStarChange={refreshWatchlist}
-            />
-
-            {/* 중장기 추천 (60일) */}
-            <Predictions60dSection
-              predictions5d={predictions}
-              onClickSymbol={openModalForSymbol}
-            />
-
-            {/* 코스피 시총 상위 10 */}
-            <KospiTop10Section
-              onClickSymbol={openModalForSymbol}
-              onCompareToggle={toggleCompare}
-              compareList={compareList}
-              watchlist={watchlist}
-              onStarChange={refreshWatchlist}
-              predictions={predictions}
-              volSurge={volSurge}
-            />
-
-            {/* 추천 그리드 */}
-            <div>
-              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                <div>
-                  <h2 className="text-white font-semibold">관심 종목 {predictions.length + volSurge.length}종목</h2>
-                  <p className="text-gray-400 text-xs mt-0.5">5일 보유 전략 · 클릭하면 상세 분석</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleWatchlistToggle}
-                    className={`text-xs px-3 py-1.5 rounded-lg border transition-colors flex items-center gap-1.5 ${
-                      showWatchlistOnly ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-300' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {watchlistLoading
-                      ? <><div className="w-3 h-3 border border-yellow-400 border-t-transparent rounded-full animate-spin" />불러오는 중...</>
-                      : '★ 관심 종목만'}
-                  </button>
-                  {compareList.length > 0 && (
-                    <button onClick={() => setCompareList([])} className="text-xs bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-600/50 transition-colors">
-                      비교 ({compareList.length}) 초기화
-                    </button>
-                  )}
-                  <span className="text-emerald-500 text-xs font-medium bg-emerald-500/10 px-2.5 py-1 rounded-full">{date ? fmtDate(date) : ''}</span>
-                </div>
-              </div>
-
-              {/* 검색 */}
-              <div className="relative mb-4">
-                <div className="flex items-center bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 gap-2 focus-within:border-emerald-500/60 transition-colors">
-                  <svg className="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
-                  </svg>
-                  <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="종목명 또는 코드 검색 (예: 삼성전자, 005930)"
-                    className="flex-1 bg-transparent text-sm text-white placeholder:text-gray-500 focus:outline-none" />
-                  {searchQuery && (
-                    <button onClick={() => { setSearchQuery(''); setSearchHits([]) }} className="text-gray-500 hover:text-white transition-colors">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-                {searchQuery.trim() && filteredPredictions.length === 0 && (
-                  <div className="absolute top-full mt-1 w-full bg-gray-900 border border-gray-700 rounded-xl overflow-hidden z-20 shadow-xl">
-                    {searchLoading && (
-                      <div className="flex items-center gap-2 px-4 py-3 text-gray-400 text-sm">
-                        <div className="w-3.5 h-3.5 border border-emerald-500 border-t-transparent rounded-full animate-spin" />검색 중...
-                      </div>
-                    )}
-                    {!searchLoading && searchHits.length === 0 && <p className="text-gray-500 text-sm px-4 py-3">검색 결과 없음</p>}
-                    {searchHits.map(hit => {
-                      const code = hit.symbol.replace(/\.(KS|KQ)$/, '')
-                      const inCmp = compareList.includes(code)
-                      return (
-                        <div key={hit.symbol} className="flex items-center border-t border-gray-800 first:border-0 hover:bg-gray-800 transition-colors">
-                          <button
-                            onClick={() => { setSearchQuery(''); setSearchHits([]); openModalForSymbol(code, hit.shortname) }}
-                            className="flex-1 flex items-center justify-between px-4 py-2.5 text-left"
-                          >
-                            <span className="text-white text-sm font-medium">{hit.shortname}</span>
-                            <div className="flex items-center gap-2 text-xs text-gray-400">
-                              <span>{code}</span>
-                              <span className="bg-gray-700 px-1.5 py-0.5 rounded">{hit.exchDisp}</span>
-                              <span className="text-emerald-400">AI 분석 →</span>
-                            </div>
-                          </button>
-                          <button
-                            onClick={e => {
-                              e.stopPropagation()
-                              setNames(prev => ({ ...prev, [code]: hit.shortname }))
-                              toggleCompare(code)
-                            }}
-                            className={`shrink-0 text-xs px-3 py-1.5 mr-3 rounded transition-colors ${
-                              inCmp
-                                ? 'bg-indigo-500/30 text-indigo-300'
-                                : compareList.length >= 6
-                                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                                : 'bg-gray-700 text-gray-300 hover:bg-indigo-500/20 hover:text-indigo-300'
-                            }`}
-                            disabled={!inCmp && compareList.length >= 6}
-                          >
-                            {inCmp ? '비교 ✓' : '비교'}
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* 모의투자 재분석 리포트 배너 (1회성) */}
-              <ReanalysisBanner info={reanalysisInfo} />
-
-              {/* 시장 국면 정보 배너 (순수 표시 — 추천 결과 미변경) */}
-              <MarketModeBanner mode={marketMode} message={marketMessage} />
-
-              {/* 저변동성 신뢰도 경고 배너 (크기 — 약세장 가드와 독립적, 동시 표시 가능) */}
-              <VolatilityRegimeBanner regime={volatilityRegime} />
-
-              {/* 신뢰도·위험도 요약 */}
-              {(confDist.HIGH || confDist.MEDIUM || riskDist.HIGH || riskDist.MEDIUM) ? (
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400 px-1">
-                  <span>오늘 <span className="text-white font-medium">{predictions.length}</span>종목 추천</span>
-                  {health?.prices_latest_date && (() => {
-                    const d = health.prices_latest_date!
-                    const label = `${d.slice(4,6)}/${d.slice(6,8)} 기준 예측`
-                    return health.prices_stale
-                      ? <span className="text-yellow-400 font-medium">{label}</span>
-                      : <span className="text-gray-500">{label}</span>
-                  })()}
-                  {(confDist.HIGH || confDist.MEDIUM) ? (
-                    <span className="flex items-center gap-2">
-                      <span>신뢰도</span>
-                      {confDist.HIGH > 0 && <span className="text-emerald-400 font-medium">HIGH {confDist.HIGH}</span>}
-                      {confDist.MEDIUM > 0 && <span className="text-yellow-400 font-medium">MED {confDist.MEDIUM}</span>}
-                    </span>
-                  ) : null}
-                  {(riskDist.HIGH > 0 || riskDist.MEDIUM > 0) ? (
-                    <span className="flex items-center gap-2">
-                      <span>위험</span>
-                      {riskDist.HIGH > 0 && <span className="text-red-400 font-medium">HIGH {riskDist.HIGH}</span>}
-                      {riskDist.MEDIUM > 0 && <span className="text-orange-400 font-medium">MED {riskDist.MEDIUM}</span>}
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {/* 카드 그리드 — AI 추천 목록 */}
-              {showWatchlistOnly && watchlistLoading ? (
-                <div className="text-center py-16 text-gray-500 text-sm">관심 종목 불러오는 중...</div>
-              ) : showWatchlistOnly && filteredPredictions.length === 0 ? (
-                <div className="text-center py-16 text-gray-500 text-sm">관심 종목이 없습니다. 카드의 ★를 눌러 추가하세요.</div>
-              ) : !showWatchlistOnly && predictions.length === 0 && volSurge.length === 0 ? (
-                <div className="text-center py-16 text-gray-500 text-sm">예측 데이터가 없습니다.</div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredPredictions.map(pred => (
-                    <PredictionCard key={pred.symbol} pred={pred}
-                      onClick={() => openModal(pred)}
-                      onCompareToggle={toggleCompare}
-                      inCompare={compareList.includes(pred.symbol)}
-                      watchlist={watchlist}
-                      onStarChange={refreshWatchlist}
-                      lowVolRegime={volatilityRegime?.low_vol_warning}
-                    />
-                  ))}
-                </div>
-              )}
-
-              <p className="text-center text-gray-600 text-xs pt-1">
-                AI 추천은 참고용입니다. 투자 손실에 대한 책임은 투자자 본인에게 있습니다.
-              </p>
-            </div>
-
-            {/* 비교 패널 */}
-            {compareList.length >= 2 && (
-              <ComparePanel
-                symbols={compareList}
-                names={names}
-                details={compareDetails}
-                onClose={() => setCompareList([])}
+            {/* 관심 종목 */}
+            {watchlistItems && watchlistItems.length > 0 && (
+              <WatchlistSection
+                items={watchlistItems}
+                onToggle={onToggleWatchlist}
+                onSelect={onWatchlistStockSelect}
               />
             )}
+
+            {/* 포트폴리오 상관관계 */}
+            <CorrelationSection onSelect={onWatchlistStockSelect} />
+
+            {/* 시그널 로그 */}
+            <SignalLogSection onSelect={onWatchlistStockSelect} />
+            <CalendarSection onSelect={onWatchlistStockSelect} />
+
+            {/* 검증된 조합 단축 */}
+            <PresetShortcuts onPresetSelect={_onPresetSelect} />
+
+            {/* 시스템 상태 */}
+            <SystemStatusSection health={health} livePerf={livePerf} />
           </>
         )}
       </div>

@@ -155,3 +155,43 @@ def test_paper_trades_model_version_coverage(conn):
     assert null_ratio < 0.95, (
         f"paper_trades.model_version NULL 비율={null_ratio:.1%}로 너무 높음"
     )
+
+
+def test_flows_foreign_rate_field(conn):
+    """flows 테이블에 foreign_net과 foreign_rate_source 컬럼이 존재하고,
+    최소 1개 이상 actual 또는 estimated 값이 있어야 한다.
+    (스크리너 '외국인 보유비율' 표시 전제 조건)"""
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "flows" not in tables:
+        pytest.skip("flows 테이블 없음")
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(flows)").fetchall()}
+    assert "foreign_net" in cols, "flows 테이블에 foreign_net 컬럼 없음"
+    assert "foreign_rate_source" in cols, "flows 테이블에 foreign_rate_source 컬럼 없음"
+
+    cnt = conn.execute(
+        "SELECT COUNT(*) FROM flows WHERE foreign_net IS NOT NULL"
+    ).fetchone()[0]
+    assert cnt > 0, "flows.foreign_net 값이 하나도 없음 — 외국인 보유비율 표시 불가"
+
+
+def test_screener_foreign_rate_in_response():
+    """GET /api/screener?symbol=005930 응답에 foreign_rate 필드가 포함돼야 한다."""
+    import urllib.request, json
+    try:
+        with urllib.request.urlopen(
+            "http://127.0.0.1:8001/api/screener?symbol=005930", timeout=5
+        ) as r:
+            data = json.loads(r.read())
+        assert "stock" in data, f"/api/screener?symbol=005930 응답에 stock 없음: {list(data.keys())}"
+        stock = data["stock"]
+        assert "foreign_rate" in stock, (
+            f"stock 객체에 foreign_rate 필드 없음. 실제 키: {list(stock.keys())}"
+        )
+        # 값은 float 또는 null 허용
+        val = stock["foreign_rate"]
+        assert val is None or isinstance(val, (int, float)), (
+            f"foreign_rate 타입 오류: {type(val)}"
+        )
+    except OSError:
+        pytest.skip("서버 미실행 (http://127.0.0.1:8001)")

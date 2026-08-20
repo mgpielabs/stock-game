@@ -481,7 +481,12 @@ def get_live_performance() -> Dict[str, Any]:
 
 if __name__ == "__main__":
     import argparse
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
+                        stream=sys.stdout)
 
     parser = argparse.ArgumentParser(description="예측 이력 기록 + 만기 실측")
     parser.add_argument("--settle-only", action="store_true", help="만기 실측만 실행")
@@ -497,10 +502,21 @@ if __name__ == "__main__":
 
     today = datetime.now().strftime("%Y%m%d")
 
+    # 비거래일(주말·공휴일)이면 예측 기록 스킵 — 거래일에만 신규 예측 기록
+    if not args.settle_only:
+        with sqlite3.connect(DB_PATH) as _c:
+            _is_td = _c.execute(
+                "SELECT COUNT(*) FROM market_index WHERE code='1001' AND date=?", (today,)
+            ).fetchone()[0]
+        if not _is_td:
+            logger.info("비거래일(%s) — 예측 기록 스킵, 실측 청산만 진행", today)
+            args.settle_only = True
+
     if not args.settle_only:
         # 예측 기록: predictor.py를 직접 import해 예측 생성
         try:
             from predictor import predict_today, load_model, get_latest_feature_date, load_calibrator  # noqa
+            from concentration_filter import RecommendationLog, filter_cooldown  # noqa
             from pathlib import Path as _Path
             from dataset import FEATURE_COLS_REDUCED  # noqa
             import json as _json
@@ -509,9 +525,23 @@ if __name__ == "__main__":
             calibrator = load_calibrator(model_dir)
             latest_date = get_latest_feature_date()
 
-            preds_5d = predict_today(booster, latest_date, top_n=10, calibrator=calibrator)
+            # raw top50 획득 (필터 후 충분한 후보 확보)
+            preds_5d_raw = predict_today(booster, latest_date, top_n=50, calibrator=calibrator)
+
+            # raw 예측을 shadow에 기록 (gate="raw_cooldown") — 비교용
+            log_shadow_predictions(today, "5d", preds_5d_raw[:20], horizon=5, gate="raw_cooldown")
+
+            # concentration_filter 적용 (main.py get_today_predictions와 동일)
+            _rec_log = RecommendationLog()
+            preds_5d_filtered, _excluded = filter_cooldown(
+                preds_5d_raw, _rec_log, cooldown_days=5, today=today
+            )
+            if _excluded:
+                logger.info("쿨다운 제외 %d종목: %s", len(_excluded), [p["symbol"] for p in _excluded])
+
+            preds_5d = preds_5d_filtered[:10]
             n5 = log_predictions(today, "5d", preds_5d, horizon=5)
-            logger.info("5d 예측 기록: %d건", n5)
+            logger.info("5d 예측 기록: %d건 (raw=%d, 필터후=%d)", n5, len(preds_5d_raw), len(preds_5d_filtered))
 
             try:
                 from predictor import predict_60d  # noqa

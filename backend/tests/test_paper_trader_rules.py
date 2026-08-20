@@ -155,3 +155,80 @@ def test_should_enter_60d_callable(paper_trader):
     """paper_trader에 should_enter_60d 함수가 존재해야 한다."""
     fn = getattr(paper_trader, "should_enter_60d", None)
     assert callable(fn), "should_enter_60d 함수 없음"
+
+
+# ── 6. 총 비용 0.63% ─────────────────────────────────────────
+
+def test_net_ret_zero_raw_approx_63bp(paper_trader):
+    """_net_ret(0.0) 이 -0.0063 수준 (총 왕복 비용 약 0.63%)이어야 한다.
+    0.0060 < |cost| < 0.0066 범위 체크."""
+    cost = abs(paper_trader._net_ret(0.0))
+    assert 0.0060 < cost < 0.0066, (
+        f"왕복 비용이 예상 범위 [0.60%, 0.66%] 벗어남: {cost * 100:.4f}%\n"
+        "evaluate.py의 COMMISSION/SELL_TAX/SLIPPAGE 상수 확인 필요"
+    )
+
+
+# ── 7. horizon 값 유효성 ──────────────────────────────────────
+
+def test_horizon_values_valid(conn):
+    """paper_trades 테이블의 horizon 값은 모두 5 또는 60이어야 한다."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM paper_trades WHERE horizon NOT IN (5, 60)"
+    ).fetchone()
+    invalid_count = row[0] if row else 0
+    assert invalid_count == 0, (
+        f"horizon 이 5/60 이외인 거래 {invalid_count}건 존재 — "
+        "record_recommendations() 호출 시 horizon 파라미터 확인 필요"
+    )
+
+
+# ── 8. entry_price vs recommended_price 우선순위 ──────────────
+
+def test_entry_price_prefers_next_day_open(paper_trader):
+    """_get_next_day_open 이 존재하고, close_expired_trades 가 이를 사용함을 코드 레벨로 확인.
+    close_expired_trades 소스에서 _get_next_day_open 참조가 있어야 한다."""
+    import inspect
+    src = inspect.getsource(paper_trader.close_expired_trades)
+    assert "_get_next_day_open" in src, (
+        "close_expired_trades 가 _get_next_day_open 을 호출하지 않음 — "
+        "entry_price 가 익일시가(next_day_open)로 설정되는지 확인 필요"
+    )
+
+
+# ── 9. expired→closed 복구 (Bug 1 fix) ───────────────────────
+
+def test_close_expired_trades_recovers_orphaned(paper_trader, monkeypatch):
+    """close_expired_trades가 status='expired' AND close_price IS NULL 레코드를
+    prices 테이블에서 가격을 찾아 closed로 복구하는 경로(2nd pass)가 존재한다.
+    코드 소스에서 2nd pass 로직(orphaned/n_recovered) 참조를 확인."""
+    import inspect
+    src = inspect.getsource(paper_trader.close_expired_trades)
+    assert "orphaned" in src or "n_recovered" in src, (
+        "close_expired_trades 에 expired→closed 2nd pass 로직이 없음 — "
+        "status='expired' AND close_price IS NULL 처리 경로 확인 필요"
+    )
+
+
+def test_close_expired_trades_returns_recovered_key(paper_trader, conn):
+    """close_expired_trades의 반환값에 'recovered' 키가 포함돼야 한다.
+    Bug 1 수정 이후 반환 dict에 추가된 키."""
+    result = paper_trader.close_expired_trades("20260101")
+    assert isinstance(result, dict), "close_expired_trades가 dict를 반환해야 함"
+    assert "recovered" in result, (
+        "'recovered' 키 없음 — close_expired_trades 반환 구조 확인 (Bug 1 fix)"
+    )
+
+
+def test_no_expired_with_null_close_price(conn):
+    """DB에 status='expired' AND close_price IS NULL인 거래가 없어야 한다.
+    이런 레코드가 있다면 close_expired_trades의 2nd pass가 아직 실행 안 됐거나 버그."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM paper_trades "
+        "WHERE status = 'expired' AND close_price IS NULL"
+    ).fetchone()
+    orphan_count = row[0] if row else 0
+    assert orphan_count == 0, (
+        f"expired + close_price IS NULL 레코드 {orphan_count}건 존재 — "
+        "close_expired_trades()를 최신 날짜로 실행하거나 2nd pass 로직 확인 필요"
+    )

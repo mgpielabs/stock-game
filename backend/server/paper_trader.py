@@ -357,10 +357,56 @@ def close_expired_trades(today: str) -> Dict[str, int]:
                     )
                     n_closed += 1
 
+        # ── 2nd pass: 이전 실행에서 expired됐으나 close_price IS NULL인 거래 재처리 ──
+        # expired 처리 시점에 prices 데이터가 없었더라도 이후 파이프라인이 돌면서 채워진 경우 복구
+        orphaned = conn.execute(
+            """
+            SELECT id, symbol, recommended_date, recommended_price,
+                   COALESCE(horizon, 5) AS horizon, close_date
+            FROM paper_trades
+            WHERE status = 'expired' AND close_price IS NULL AND close_date IS NOT NULL
+            """,
+        ).fetchall()
+
+        n_recovered = 0
+        for trade_id, symbol, rec_date, rec_price, horizon, close_date in orphaned:
+            price_row = conn.execute(
+                "SELECT close FROM prices WHERE symbol = ? AND date = ?",
+                (symbol, close_date),
+            ).fetchone()
+            if price_row is None:
+                continue
+
+            close_price = price_row[0]
+            entry = _get_next_day_open(symbol, rec_date)
+            actual_entry = entry if entry else rec_price
+            if not actual_entry:
+                continue
+
+            gross_ret = close_price / actual_entry - 1
+            net = _net_ret(gross_ret)
+            return_pct = round(net * 100, 4)
+            holding = _count_trading_days_between(rec_date, close_date)
+            conn.execute(
+                """
+                UPDATE paper_trades
+                SET status = 'closed',
+                    close_price = ?, entry_price = ?,
+                    return_pct = ?, holding_days = ?,
+                    updated_at = datetime('now','localtime')
+                WHERE id = ?
+                """,
+                (close_price, actual_entry, return_pct, holding, trade_id),
+            )
+            n_recovered += 1
+
         conn.commit()
 
-    logger.info("[paper_trader] %s 기준 closed=%d expired=%d", today, n_closed, n_expired)
-    return {"closed": n_closed, "expired": n_expired}
+    if n_recovered:
+        logger.info("[paper_trader] expired→closed 복구 %d건", n_recovered)
+    logger.info("[paper_trader] %s 기준 closed=%d expired=%d recovered=%d",
+                today, n_closed, n_expired, n_recovered)
+    return {"closed": n_closed, "expired": n_expired, "recovered": n_recovered}
 
 
 # ── 조회 ────────────────────────────────────────────────────
@@ -396,7 +442,7 @@ def get_active_trades() -> List[Dict[str, Any]]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT pt.*, s.name
+            SELECT pt.*, s.name, s.sector
             FROM paper_trades pt
             LEFT JOIN stocks s ON pt.symbol = s.symbol
             WHERE pt.status = 'open'

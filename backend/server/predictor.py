@@ -601,11 +601,38 @@ def _enrich_with_price_features(feat_df: pd.DataFrame, date: str) -> pd.DataFram
     return feat_df
 
 
+_ETF_PATTERN = (
+    r'ETF|ETN|레버리지|인버스|선물'
+    r'|^(?:TIGER|KODEX|KOSEF|KINDEX|ARIRANG|HANARO|KBSTAR|TREX|ACE|RISE|SOL|TIMEFOLIO)\s'
+)
+_etf_symbol_cache: set[str] | None = None
+
+def _get_etf_symbols() -> set[str]:
+    """ETF/ETN/인버스/레버리지 종목 심볼 집합 — stocks 테이블 갱신 전까지 캐시."""
+    global _etf_symbol_cache
+    if _etf_symbol_cache is None:
+        import re
+        pat = re.compile(_ETF_PATTERN, re.IGNORECASE)
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute("SELECT symbol, name FROM stocks").fetchall()
+        _etf_symbol_cache = {sym for sym, name in rows if name and pat.search(name)}
+        logger.info("ETF/인버스/레버리지 서빙 제외 심볼 캐시: %d개", len(_etf_symbol_cache))
+    return _etf_symbol_cache
+
+
+def invalidate_etf_cache() -> None:
+    """stocks 테이블 갱신 후(일일 파이프라인 1단계) 캐시 무효화."""
+    global _etf_symbol_cache
+    _etf_symbol_cache = None
+
+
 def _load_features_for_date(date: str) -> pd.DataFrame:
     with sqlite3.connect(DB_PATH) as conn:
         feat_df = pd.read_sql_query(
             "SELECT * FROM features WHERE date = ?", conn, params=(date,)
         )
+    etf_syms = _get_etf_symbols()
+    feat_df = feat_df[~feat_df["symbol"].isin(etf_syms)]
     return _enrich_with_price_features(feat_df, date)
 
 

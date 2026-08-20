@@ -232,4 +232,13 @@ def compute_all_technical(df: pd.DataFrame) -> pd.DataFrame:
 
     result = pd.concat(parts, axis=1)
     result.index.name = "date"
+
+    # 거래정지(volume=0) 구간이 5거래일 이상 포함된 수익률 윈도우는 NaN으로 마스킹
+    # 1~2일 단기 거래정지는 유지(실제 가격 변동 정보), 5일+ 장기 정지만 제거
+    zero_vol = (volume == 0).astype(float)
+    for n, col in [(1, "ret_1d"), (5, "ret_5d"), (20, "ret_20d"), (60, "ret_60d")]:
+        if col in result.columns:
+            zero_count = zero_vol.rolling(n + 1, min_periods=1).sum()
+            result[col] = result[col].where(zero_count < 5)
+
     return result

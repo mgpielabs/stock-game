@@ -222,6 +222,7 @@ export interface MarketTrend {
   ret_5d_pct: number
   ret_20d_pct: number
   confidence: 'high' | 'medium' | 'low'
+  kospi_20d?: number[]
   badge: string | null
   dates: string[]
   returns: number[]
@@ -282,14 +283,17 @@ export interface ActiveTrade {
   id: number
   symbol: string
   name?: string
+  sector?: string | null
   recommended_date: string
   recommended_rank: number | null
   recommended_prob: number | null
   recommended_price: number | null
+  entry_price: number | null
   current_price: number | null
   unrealized_pct: number | null
   holding_days: number
   status: string
+  horizon?: number
 }
 
 export interface TradeRecord {
@@ -300,12 +304,30 @@ export interface TradeRecord {
   recommended_rank: number | null
   recommended_prob: number | null
   recommended_price: number | null
+  entry_price?: number | null
   status: string
   close_date: string | null
   close_price: number | null
   return_pct: number | null
   holding_days: number | null
   model_version?: string | null
+  horizon?: number
+}
+
+export interface LivePerformanceSlot {
+  status: 'collecting' | 'ready'
+  n: number
+  min_sample?: number
+  metric?: 'P@10' | 'avg_excess_return'
+  value?: number | null
+  unit?: string
+  description?: string
+}
+
+export interface LivePerformanceResponse {
+  data_as_of?: string | null
+  '5d': LivePerformanceSlot
+  '60d': LivePerformanceSlot
 }
 
 export interface TimelineEntry {
@@ -406,7 +428,8 @@ export interface ReanalysisStatus {
 }
 
 export interface UpdateStatus {
-  status: 'idle' | 'running' | 'done' | 'error'
+  status: 'idle' | 'running' | 'done' | 'error' | 'skipped'
+  reason?: string          // 스킵 이유: 'weekend' | 'already_current' (status='skipped' 일 때)
   elapsed_sec: number | null
   log: string[]
   dart_partial: boolean
@@ -414,6 +437,12 @@ export interface UpdateStatus {
   latest_foreign_rate_date: string | null
   foreign_rate_stale_days: number | null
   foreign_rate_warning: boolean
+  // 진행 단계 / 경과시간 앵커 / 하트비트 (running 상태에서만 채워짐)
+  current_stage: number | null
+  current_stage_name: string | null
+  total_stages: number | null
+  started_at: number | null      // Unix timestamp (초, float) — 클라이언트 경과시간 계산용
+  last_heartbeat: number | null  // Unix timestamp (초, float) — 300s 초과 시 응답없음 경고
 }
 
 export interface VolumeAnomalyStock {
@@ -471,6 +500,8 @@ export interface ScreenerStock {
   symbol: string
   name: string
   market: string
+  sector?: string | null
+  sector_name?: string | null
   close: number
   per: number | null
   per_pit: number | null
@@ -481,8 +512,13 @@ export interface ScreenerStock {
   vol_ratio_20d: number | null
   ret_20d: number | null
   atr_pct: number | null
-  dividend_yield: number | null
+  dividend_yield: number | null    // trailing yield = DPS ÷ 현재가
+  actual_yield: number | null      // 실질 배당수익률 = 보정DPS ÷ 배당기준일 주가
   dps_growth: boolean
+  has_special_dividend: boolean
+  has_split_adjusted: boolean
+  has_div_suspended: boolean
+  has_unverified_yield: boolean
   // 60d 모델 PIT 팩터
   eps_growth_yoy: number | null
   eps_growth_accel: number | null
@@ -491,6 +527,8 @@ export interface ScreenerStock {
   // 유동성 / 60d 점수
   vol_krw_20d: number | null
   score_60d: number | null
+  // 외국인 보유비율 (flows.foreign_net 최신값, 표시 전용)
+  foreign_rate: number | null
 }
 
 export interface ScreenerRegime {
@@ -558,6 +596,189 @@ export interface SymbolProfile {
   filter_flags: FilterFlags
 }
 
+export interface CrossAnalysisPreset {
+  label: string
+  keys: string[]
+  oos_rate: string
+}
+
+export interface CrossAnalysisStock {
+  symbol: string
+  name: string
+  market: string
+  close: number
+  dividend_yield: number | null
+  actual_yield: number | null
+  score_60d: number | null
+  per: number | null
+  pbr: number | null
+  combo_count: number
+  combo_flags: boolean[]
+}
+
+export interface CrossAnalysisResponse {
+  date: string
+  presets: CrossAnalysisPreset[]
+  total: number
+  stocks: CrossAnalysisStock[]
+}
+
+export interface SectorFlowStock {
+  symbol: string
+  name: string
+  score_60d: number | null   // raw(0-1) — 표시 시 ×100
+  combo_count: number
+}
+
+export interface SectorFlowStockItem {
+  symbol: string
+  name: string
+  score_60d: number | null   // raw(0-1) — 표시 시 ×100
+  foreign_5d: number         // 억원 (외국인 5d 순매수)
+  inst_5d: number            // 억원 (기관 5d 순매수)
+  foreign_20d: number        // 억원 (외국인 20d 순매수)
+  inst_20d: number           // 억원 (기관 20d 순매수)
+  foreign_60d: number        // 억원 (외국인 60d 순매수)
+  inst_60d: number           // 억원 (기관 60d 순매수)
+  foreign_120d: number       // 억원 (외국인 120d 순매수)
+  inst_120d: number          // 억원 (기관 120d 순매수)
+  foreign_250d: number       // 억원 (외국인 250d 순매수)
+  inst_250d: number          // 억원 (기관 250d 순매수)
+}
+
+export interface SectorFlowEntry {
+  code: string
+  name: string
+  stock_count: number
+  foreign_5d: number
+  inst_5d: number
+  pension_5d: number | null
+  combined_5d: number
+  foreign_20d: number
+  inst_20d: number
+  pension_20d: number | null
+  combined_20d: number
+  foreign_60d: number
+  inst_60d: number
+  pension_60d: number | null
+  combined_60d: number
+  foreign_120d: number
+  inst_120d: number
+  pension_120d: number | null
+  combined_120d: number
+  foreign_250d: number
+  inst_250d: number
+  pension_250d: number | null
+  combined_250d: number
+  momentum_5d: number | null
+  pension_available: boolean
+  cross_stocks: SectorFlowStock[]
+  stocks: SectorFlowStockItem[]
+}
+
+export interface SectorFlowResponse {
+  date: string
+  pension_note: string
+  pension_latest_date: string | null
+  cutoffs: { '5d': string; '20d': string; '60d': string; '120d': string; '250d': string }
+  coverage: {
+    sector_count: number
+    symbols_in_sectors: number
+    total_universe: number
+  }
+  sectors: SectorFlowEntry[]
+}
+
+// ── 섹터 흐름 종합 분석 ─────────────────────────────────────────────────────
+export interface SectorFlowAnalysisMarketSummary {
+  totals: { '5d': number; '20d': number; '60d': number; '120d': number; '250d': number }
+  direction_label: string
+  direction_color: 'green' | 'red' | 'orange' | 'gray'
+  period_labels: { '5d': string; '20d': string; '60d': string; '120d': string; '250d': string }
+}
+
+export interface SectorFlowAnalysisRankEntry {
+  code: string
+  name: string
+  value: number
+}
+
+export interface SectorFlowAnalysisRankPeriod {
+  top: SectorFlowAnalysisRankEntry[]
+  bottom: SectorFlowAnalysisRankEntry[]
+}
+
+export interface SectorFlowAnalysisClassEntry {
+  code: string
+  name: string
+  combined_5d: number
+  combined_20d: number
+  combined_60d: number
+  has_cross_stocks?: boolean
+}
+
+export interface SectorFlowAnalysisConcentrationEntry {
+  sector_code: string
+  sector_name: string
+  sector_total_5d: number
+  top1_symbol: string
+  top1_name: string
+  top1_value_5d: number
+  concentration_pct: number
+  is_concentrated: boolean
+  mktcap_ratio_pct: number
+  market_cap_억: number
+  surge_ratio: number | null
+  surge_label: string | null
+}
+
+export interface SectorFlowAnalysisCrossAnalysis {
+  total_cross_stocks: number
+  cross_in_inflow_sectors: number
+  cross_as_sector_top1: number
+  inflow_sector_count: number
+}
+
+export interface SectorFlowAnalysisResponse {
+  date: string
+  data_source: {
+    label: string
+    detail: string
+    pension_latest_date: string | null
+  }
+  market_summary: SectorFlowAnalysisMarketSummary
+  sector_rankings: {
+    '5d': SectorFlowAnalysisRankPeriod
+    '20d': SectorFlowAnalysisRankPeriod
+    '60d': SectorFlowAnalysisRankPeriod
+    '120d': SectorFlowAnalysisRankPeriod
+    '250d': SectorFlowAnalysisRankPeriod
+  }
+  sector_classification: {
+    consistent_inflow: SectorFlowAnalysisClassEntry[]
+    consistent_outflow: SectorFlowAnalysisClassEntry[]
+    short_reversal: SectorFlowAnalysisClassEntry[]
+    short_exit: SectorFlowAnalysisClassEntry[]
+  }
+  concentration: {
+    all: SectorFlowAnalysisConcentrationEntry[]
+    concentrated: SectorFlowAnalysisConcentrationEntry[]
+  }
+  cross_analysis: SectorFlowAnalysisCrossAnalysis
+}
+
+export interface StockChartPoint {
+  date: string                 // YYYYMMDD
+  open: number | null          // 시가
+  high: number | null          // 고가
+  low: number | null           // 저가
+  close: number                // 종가
+  volume: number | null        // 거래량 (주)
+  foreign_net: number | null   // 외국인 순매수 (억원)
+  inst_net: number | null      // 기관계 순매수 (억원)
+  indiv_net: number | null     // 개인 순매수 (억원)
+}
+
 export const screenerApi = {
   search: (filters: ScreenerFilters) => {
     const params = new URLSearchParams()
@@ -568,6 +789,14 @@ export const screenerApi = {
     apiFetch<StockSearchResult[]>(`/api/stocks/search?q=${encodeURIComponent(q)}`),
   symbolProfile: (symbol: string) =>
     apiFetch<SymbolProfile>(`/api/screener?symbol=${encodeURIComponent(symbol)}`),
+  crossAnalysis: () =>
+    apiFetch<CrossAnalysisResponse>('/api/screener/cross-analysis'),
+  sectorFlow: () =>
+    apiFetch<SectorFlowResponse>('/api/screener/sector-flow'),
+  sectorFlowAnalysis: () =>
+    apiFetch<SectorFlowAnalysisResponse>('/api/screener/sector-flow/analysis'),
+  stockChart: (symbol: string, period: '60d' | '120d' | '1y' | '2y' | '3y' | 'all' = '1y') =>
+    apiFetch<StockChartPoint[]>(`/api/stock/${encodeURIComponent(symbol)}/chart?period=${period}`),
 }
 
 export const updateApi = {
@@ -596,6 +825,26 @@ export interface Predictions60dResponse {
   note: string
 }
 
+export interface OpenPosition {
+  symbol: string
+  name: string
+  recommended_date: string
+  horizon: number
+  elapsed_days: number
+  remaining_days: number
+  recommended_price: number
+  current_price: number | null
+  pnl_pct: number | null
+}
+
+export interface OpenSummaryResponse {
+  count: number
+  avg_pnl_pct: number | null
+  best: OpenPosition | null
+  worst: OpenPosition | null
+  positions: OpenPosition[]
+}
+
 export const aiApi = {
   health: () =>
     apiFetch<HealthResponse>('/health'),
@@ -603,6 +852,8 @@ export const aiApi = {
     apiFetch<TodayResponse>(`/api/predictions/today?top_n=${topN}`),
   predictions60d: (topN = 10) =>
     apiFetch<Predictions60dResponse>(`/api/predictions/60d?top_n=${topN}`),
+  openSummary: () =>
+    apiFetch<OpenSummaryResponse>('/api/paper/open-summary'),
   ticker: (symbol: string, priceDays = 60) =>
     apiFetch<TickerDetail>(`/api/predictions/${symbol}?price_days=${priceDays}`),
   performance: () =>
@@ -628,6 +879,8 @@ export const aiApi = {
     apiFetch<AlltimeVolumeSurgeResponse>(
       `/api/alltime-volume-surge?rank_max=${rankMax}&ret_min=${retMin}&ret_max=${retMax}&lookback=${lookback}`
     ),
+  livePerformance: () =>
+    apiFetch<LivePerformanceResponse>('/api/live-performance'),
 }
 
 export interface AlltimeVolumeSurgeStock {
@@ -653,4 +906,72 @@ export interface AlltimeVolumeSurgeResponse {
   lookback: number
   count: number
   stocks: AlltimeVolumeSurgeStock[]
+}
+
+export interface WatchlistItem {
+  symbol: string
+  name: string | null
+  added_at: string
+  memo: string | null
+}
+
+async function apiFetchWithOptions<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${AI_BASE}${path}`, options)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
+    throw new Error(err.detail ?? `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<T>
+}
+
+export const watchlistApi = {
+  list: () => apiFetch<WatchlistItem[]>('/api/watchlist'),
+  add: (symbol: string, name?: string) =>
+    apiFetchWithOptions<WatchlistItem>('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol, name }),
+    }),
+  remove: (symbol: string) =>
+    apiFetchWithOptions<{ symbol: string; removed: boolean }>(`/api/watchlist/${symbol}`, { method: 'DELETE' }),
+}
+
+export interface SignalLog {
+  id: number
+  event_type: 'foreign_surge' | 'score60d_entry' | 'watchlist_price_jump' | 'sector_quadrant' | 'position_event'
+  ticker: string | null
+  sector: string | null
+  message: string
+  data: Record<string, unknown> | null
+  created_at: string
+}
+
+export const signalsApi = {
+  list: (days = 7) => apiFetch<SignalLog[]>(`/api/signals?days=${days}`),
+}
+
+export interface CalendarEvent {
+  date: string  // YYYYMMDD
+  type: 'position_entry' | 'position_expiry' | 'dividend_record' | 'dividend_exdate' | 'signal_event' | 'system_schedule'
+  color: 'blue' | 'orange' | 'green' | 'red' | 'purple'
+  label: string
+  ticker: string | null
+}
+
+export const calendarApi = {
+  events: (year: number, month: number) =>
+    apiFetch<CalendarEvent[]>(`/api/calendar?year=${year}&month=${month}`),
+}
+
+export interface CorrelationResponse {
+  symbols: string[]
+  names: Record<string, string>
+  matrix: number[][]
+  avg_correlation: number | null
+  trading_days_used?: number
+  message?: string
+}
+
+export const portfolioApi = {
+  correlation: () => apiFetch<CorrelationResponse>('/api/portfolio/correlation'),
 }

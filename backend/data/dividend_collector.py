@@ -136,6 +136,14 @@ def parse_dividend_record(items: List[Dict]) -> Dict:
             result["settlement_date"] = item["stlm_dt"].replace("-", "")
 
         if "주당 현금배당금" in se:
+            # DPS > 1,000,000은 주당이 아닌 총액(원)이 잘못 기입된 DART 공시 오류.
+            # 예: 067900 와이엔텍 — 현금배당금총액(원)이 주당 필드에 기재됨.
+            # 이미 서버의 dps < 1,000,000 안전장치가 있으나, 수집 단계에서도 방어.
+            if val is not None and val > 1_000_000:
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    "DPS > 1,000,000 감지 (%s 원) — DART 공시 오류 추정, None 처리", val)
+                val = None
             if knd == "보통주":
                 result["common_dps"] = val
             elif knd == "우선주":

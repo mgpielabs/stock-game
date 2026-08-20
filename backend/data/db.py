@@ -257,6 +257,28 @@ CREATE TABLE IF NOT EXISTS prediction_outcomes (
 
 CREATE INDEX IF NOT EXISTS idx_pred_log_date  ON prediction_log (predicted_at);
 CREATE INDEX IF NOT EXISTS idx_pred_log_model ON prediction_log (model, predicted_at);
+
+CREATE TABLE IF NOT EXISTS watchlist (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol     TEXT NOT NULL UNIQUE,
+    name       TEXT,
+    added_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    memo       TEXT
+);
+
+-- 시그널 로그 (파이프라인 실행 시 규칙 기반 이벤트 감지 → INSERT)
+-- event_type: foreign_surge | score60d_entry | watchlist_price_jump | sector_quadrant | position_event
+CREATE TABLE IF NOT EXISTS signal_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type  TEXT NOT NULL,
+    ticker      TEXT,           -- 종목코드 (nullable: 섹터 이벤트 등)
+    sector      TEXT,           -- 섹터명 (nullable)
+    message     TEXT NOT NULL,  -- 사람이 읽기 좋은 요약
+    data        TEXT,           -- JSON 추가 데이터
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_signal_log_created ON signal_log (created_at);
+CREATE INDEX IF NOT EXISTS idx_signal_log_type    ON signal_log (event_type);
 """
 
 

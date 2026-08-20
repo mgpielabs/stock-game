@@ -38,3 +38,8 @@ export function formatProfit(억: number): string {
   if (abs >= 100) return `${abs.toLocaleString()}억원`
   return `${abs}억원`
 }
+
+// YYYYMMDD → YYYY.MM.DD
+export function fmtDate(s: string): string {
+  return s.length === 8 ? `${s.slice(0, 4)}.${s.slice(4, 6)}.${s.slice(6, 8)}` : s
+}

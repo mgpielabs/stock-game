@@ -40,7 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from data.db import init_db
+from data.db import init_db, get_connection as _db_get_connection
 from concentration_filter import RecommendationLog
 from disclosure_analysis import analyze_risks
 from disclosure_filter import filter_risky_predictions
@@ -63,6 +63,7 @@ from predictor import (
     get_regime_gate_g2,
     get_volatility_regime,
     invalidate_60d_model_cache,
+    invalidate_etf_cache,
     load_backtest_data,
 
     load_calibrator,
@@ -85,6 +86,27 @@ logging.basicConfig(
 
 BACKEND_ROOT = Path(__file__).parent.parent
 DB_PATH = BACKEND_ROOT / "data" / "stocks.db"
+
+# KSIC 업종코드 → 한국어 섹터명 캐시 (최초 접근 시 1회 로드)
+_ksic_names_cache: Optional[Dict[str, str]] = None
+
+def _get_ksic_names() -> Dict[str, str]:
+    global _ksic_names_cache
+    if _ksic_names_cache is None:
+        try:
+            ksic_path = BACKEND_ROOT / "data" / "ksic_sector_names.json"
+            import json as _json_mod
+            _ksic_names_cache = _json_mod.loads(ksic_path.read_text(encoding="utf-8"))
+        except Exception:
+            _ksic_names_cache = {}
+    return _ksic_names_cache
+
+def _sector_name(sector_code: Optional[str]) -> Optional[str]:
+    """DART induty_code(5~6자리) → KSIC 3자리 키로 한국어 섹터명 반환."""
+    if not sector_code:
+        return None
+    key = str(sector_code)[:3]
+    return _get_ksic_names().get(key)
 
 class _State:
     booster: Optional[Any] = None
@@ -151,6 +173,18 @@ class _State:
     # 스크리너: 20일 평균 거래대금 (prices.close*volume)
     vol20d_cache: Optional[Dict[str, float]] = None
     vol20d_date: Optional[str] = None
+    # 스크리너: 특별배당 포함 여부 플래그 (payout_ratio > 100% → True)
+    special_div_cache: Optional[Dict[str, bool]] = None
+    special_div_date: Optional[str] = None
+    # 스크리너: 주식병합/분할 CF 보정 적용 여부 플래그 (CF ≠ 1.0 → True)
+    split_adj_cache: Optional[Dict[str, bool]] = None
+    split_adj_date: Optional[str] = None
+    # 스크리너: 배당중단의심 플래그 (FY2024 사용 중 + FY2025 dps=NULL 행 존재 → True)
+    div_suspended_cache: Optional[Dict[str, bool]] = None
+    div_suspended_date: Optional[str] = None
+    # 스크리너: 실질 배당수익률 = 보정DPS ÷ 배당기준일 주가 (prices 테이블 조회)
+    actual_yield_cache: Optional[Dict[str, float]] = None
+    actual_yield_date: Optional[str] = None
     # 재학습 프로세스 추적
     retrain_proc: Optional[subprocess.Popen] = None
     retrain_started_at: Optional[float] = None
@@ -160,6 +194,12 @@ class _State:
     update_started_at: Optional[float] = None
     update_log: List[str] = []
     update_finished_status: Optional[str] = None  # 마지막 완료 결과: "done" | "error"
+    # 스크리너: 섹터 자금흐름 집계 캐시
+    sector_flow_cache: Optional[Dict] = None
+    sector_flow_date: Optional[str] = None
+    # 스크리너: 외국인 보유비율 맵 (flows.foreign_net 최신값, 표시 전용)
+    foreign_rate_cache: Optional[Dict[str, float]] = None
+    foreign_rate_date: Optional[str] = None
 
 _state = _State()
 
@@ -214,7 +254,20 @@ def _reload_model_and_cache() -> None:
         _state.scores_60d_date = None
         _state.vol20d_cache = None
         _state.vol20d_date = None
+        _state.special_div_cache = None
+        _state.special_div_date = None
+        _state.split_adj_cache = None
+        _state.split_adj_date = None
+        _state.div_suspended_cache = None
+        _state.div_suspended_date = None
+        _state.actual_yield_cache = None
+        _state.actual_yield_date = None
+        _state.sector_flow_cache = None
+        _state.sector_flow_date = None
+        _state.foreign_rate_cache = None
+        _state.foreign_rate_date = None
         invalidate_60d_model_cache()
+        invalidate_etf_cache()
         try:
             preds = predict_today(_state.booster, _state.latest_date, top_n=100, calibrator=_state.calibrator)
             filtered, excluded = filter_risky_predictions(preds, days=14)
@@ -290,29 +343,12 @@ async def lifespan(app: FastAPI):
             _gate = _get_regime_gate_cached(_state.latest_date)
             _gate_blocked = _gate.get("gate_blocked", False)
 
-            # ── 5d 슬리브: G2 게이트 적용 ──
-            if _gate_blocked:
-                # G2 차단 → 5d 신규진입 없음, shadow에만 기록 (게이트無 가상기록)
-                from prediction_logger import log_shadow_predictions
-                log_shadow_predictions(_state.latest_date, "5d", top10, horizon=5)
-                logger.info("G2 게이트 차단 — 5d shadow 기록 (%s)", _gate.get("reason", ""))
-            else:
-                # 5거래일 주기 리밸런싱 (백테스트 일치)
-                if should_enter_5d(_state.latest_date):
-                    inserted = record_recommendations(
-                        _state.latest_date, top10,
-                        market_mode=_mode,
-                        bear_guard_active=bool(_guard_active),
-                        model_version=_model_ver.name if _model_ver else None,
-                        regime_gate_blocked=False,
-                        horizon=5,
-                    )
-                    logger.info(
-                        "모의투자 5d 기록: %s -> %d건 삽입 (mode=%s gate=off)",
-                        _state.latest_date, inserted, _mode,
-                    )
-                else:
-                    logger.info("5d 리밸런싱 주기 미도달 — 스킵 (%s)", _state.latest_date)
+            # ── 5d 슬리브: v1.2 — 5d 운용 중단, shadow 기록만 유지 ──
+            # 근거: allocation_backtest.py (2026-07-12) — 5d cum -52.9%, 60d 단독이 +71.2%p 우위
+            from prediction_logger import log_shadow_predictions
+            log_shadow_predictions(_state.latest_date, "5d", top10, horizon=5)
+            logger.info("v1.2: 5d 운용 중단 — shadow 기록만 (%s)", _state.latest_date)
+            # (G2 게이트 로직 불필요 — 진입 자체가 없음)
 
             # ── 60d 슬리브: v1.1 게이트 없음 — 항상 60거래일 주기 진입 ──
             if should_enter_60d(_state.latest_date):
@@ -768,7 +804,16 @@ async def get_model_info() -> Dict[str, Any]:
 async def market_trend_endpoint() -> Dict[str, Any]:
     """최근 20거래일 유동성 종목 중앙값 수익률 기반 시장 추세 (강세/횡보/약세)."""
     target_date = _get_date(None)
-    return _get_market_trend_cached(target_date)
+    result = dict(_get_market_trend_cached(target_date))
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT close FROM market_index WHERE code='1001' ORDER BY date DESC LIMIT 20"
+            ).fetchall()
+        result["kospi_20d"] = [r[0] for r in reversed(rows)]
+    except Exception:
+        result["kospi_20d"] = []
+    return result
 
 
 @app.get("/api/daily/summary", summary="일일 아침 요약")
@@ -1123,7 +1168,38 @@ async def retrain_status() -> Dict[str, Any]:
 # 핫리로드만 함. 자동 스케줄(평일 16:30)은 비활성화됐고 .bat(비상용)과 이 버튼이 수동 실행의
 # 두 경로 — daily_pipeline.py 자체 PID 락파일을 공유해서 어느 쪽으로 실행 중이든 중복 방지.
 
-_UPDATE_LOCK_FILE = BACKEND_ROOT / "daily_pipeline.pid"  # daily_pipeline.py가 직접 쓰는 락파일
+_UPDATE_LOCK_FILE     = BACKEND_ROOT / "daily_pipeline.pid"   # daily_pipeline.py가 직접 쓰는 락파일
+_PIPELINE_STATUS_FILE = BACKEND_ROOT / "pipeline_status.json" # 단계/하트비트 기록 (daily_pipeline.py가 씀)
+
+
+def _read_pipeline_status() -> Dict[str, Any]:
+    """daily_pipeline.py가 기록하는 JSON 상태 파일 — 진행률/하트비트/started_at/reason."""
+    try:
+        if _PIPELINE_STATUS_FILE.exists():
+            data = json.loads(_PIPELINE_STATUS_FILE.read_text(encoding="utf-8"))
+            return {
+                "current_stage":      data.get("current_stage"),
+                "current_stage_name": data.get("current_stage_name"),
+                "total_stages":       data.get("total_stages", 11),
+                "started_at":         data.get("started_at"),
+                "last_heartbeat":     data.get("last_heartbeat"),
+                "pipeline_status":    data.get("status"),
+                "reason":             data.get("reason"),
+            }
+    except Exception:
+        pass
+    return {}
+
+
+def _read_last_log_lines(n: int = 5) -> List[str]:
+    """pipeline_daily.log 마지막 N줄 — 외부 실행 중 로그 미리보기."""
+    log_path = BACKEND_ROOT / "pipeline_daily.log"
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        return [line.rstrip() for line in lines[-n:] if line.strip()]
+    except Exception:
+        return ["[로그 읽기 실패]"]
 
 
 def _check_update_already_running() -> bool:
@@ -1257,6 +1333,15 @@ def _drain_update_stdout(proc: subprocess.Popen) -> None:
             logger.warning("데이터 업데이트 실패 (exit=%s) — 서버는 영향 없이 정상 동작 유지", rc)
 
 
+_NULL_STAGE_FIELDS: Dict[str, Any] = {
+    "current_stage":      None,
+    "current_stage_name": None,
+    "total_stages":       None,
+    "started_at":         None,
+    "last_heartbeat":     None,
+}
+
+
 def _update_status() -> Dict[str, Any]:
     freshness = _get_data_freshness()
     proc = _state.update_proc
@@ -1264,34 +1349,82 @@ def _update_status() -> Dict[str, Any]:
     if proc is None:
         # 이 서버 인스턴스가 시작한 건 없어도 락파일로 .bat 등 외부 실행 감지
         if _check_update_already_running():
+            ps = _read_pipeline_status()
+            started_at = ps.get("started_at")
+            # started_at이 없으면(락파일 생성 직후 상태파일 미기록 경합) 락파일 mtime으로 폴백
+            if not started_at:
+                try:
+                    started_at = _UPDATE_LOCK_FILE.stat().st_mtime
+                except Exception:
+                    pass
+            elapsed: int = 0
+            if started_at:
+                try:
+                    elapsed = max(0, round(time.time() - started_at))
+                except Exception:
+                    pass
             return {
-                "status": "running", "elapsed_sec": None,
-                "log": ["[외부 실행] .bat 등으로 이미 진행 중인 업데이트가 감지됨"],
-                "dart_partial": False, **freshness,
+                "status":             "running",
+                "elapsed_sec":        elapsed,
+                "log":                _read_last_log_lines(5),
+                "dart_partial":       False,
+                "current_stage":      ps.get("current_stage"),
+                "current_stage_name": ps.get("current_stage_name"),
+                "total_stages":       ps.get("total_stages", 11),
+                "started_at":         started_at,
+                "last_heartbeat":     ps.get("last_heartbeat"),
+                **freshness,
             }
+        # 스케줄러가 자동 스킵한 경우 24시간 내에 배너로 노출
+        if _state.update_finished_status is None:
+            ps = _read_pipeline_status()
+            if ps.get("pipeline_status") == "skipped":
+                try:
+                    age = time.time() - (ps.get("last_heartbeat") or 0)
+                    if age < 86400:
+                        return {
+                            "status":      "skipped",
+                            "reason":      ps.get("reason"),
+                            "elapsed_sec": None,
+                            "log":         [],
+                            "dart_partial": False,
+                            **_NULL_STAGE_FIELDS,
+                            **freshness,
+                        }
+                except Exception:
+                    pass
         return {
-            "status": _state.update_finished_status or "idle",
+            "status":      _state.update_finished_status or "idle",
             "elapsed_sec": None,
-            "log": _state.update_log[-50:],
+            "log":         _state.update_log[-50:],
             "dart_partial": _dart_partial_from_log(_state.update_log),
+            **_NULL_STAGE_FIELDS,
             **freshness,
         }
 
     rc = proc.poll()
     if rc is None:
+        ps = _read_pipeline_status()
         elapsed = round(time.time() - (_state.update_started_at or 0))
         return {
-            "status": "running", "elapsed_sec": elapsed,
-            "log": _state.update_log[-50:],
-            "dart_partial": _dart_partial_from_log(_state.update_log),
+            "status":             "running",
+            "elapsed_sec":        elapsed,
+            "log":                _state.update_log[-50:],
+            "dart_partial":       _dart_partial_from_log(_state.update_log),
+            "current_stage":      ps.get("current_stage"),
+            "current_stage_name": ps.get("current_stage_name"),
+            "total_stages":       ps.get("total_stages", 11),
+            "started_at":         _state.update_started_at,
+            "last_heartbeat":     ps.get("last_heartbeat"),
             **freshness,
         }
 
     return {
-        "status": "done" if rc == 0 else "error",
+        "status":      "done" if rc == 0 else "error",
         "elapsed_sec": round(time.time() - (_state.update_started_at or 0)),
-        "log": _state.update_log[-50:],
+        "log":         _state.update_log[-50:],
         "dart_partial": _dart_partial_from_log(_state.update_log),
+        **_NULL_STAGE_FIELDS,
         **freshness,
     }
 
@@ -1308,7 +1441,7 @@ async def start_update() -> Dict[str, Any]:
     if not pipeline_script.exists():
         raise HTTPException(status_code=500, detail=f"파이프라인 스크립트를 찾을 수 없음: {pipeline_script}")
 
-    cmd = [sys.executable, str(pipeline_script), "--no-server-restart", "--force-weekend"]
+    cmd = [sys.executable, str(pipeline_script), "--no-server-restart", "--force"]
 
     _state.update_log = ["[시작] 데이터 업데이트 파이프라인 실행 중..."]
     _state.update_started_at = time.time()
@@ -1588,6 +1721,98 @@ async def paper_performance_by_model_endpoint() -> Dict[str, Any]:
     """model_version별로 거래를 그룹화해 승률/평균수익/누적수익을 따로 계산.
     현재 운영 모델(ACTIVE 포인터)·과거 모델·폐기 모델(rejected_)·추적 불가(NULL)를 구분."""
     return paper_performance_by_model()
+
+
+@app.get("/api/paper/open-summary", summary="현재 열린 60d 포지션 현황 요약")
+async def paper_open_summary() -> Dict[str, Any]:
+    """열린 포지션의 수, 평균 미실현 손익, 만기까지 남은 거래일, 최고/최저 종목 반환."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            positions = conn.execute(
+                "SELECT symbol, recommended_date, recommended_price, horizon "
+                "FROM paper_trades WHERE status='open' ORDER BY recommended_date"
+            ).fetchall()
+
+            if not positions:
+                return {"count": 0, "positions": [], "avg_pnl_pct": None, "best": None, "worst": None}
+
+            symbols = [p["symbol"] for p in positions]
+            placeholders = ",".join("?" * len(symbols))
+            latest_prices = {
+                row[0]: row[1]
+                for row in conn.execute(
+                    f"SELECT p.symbol, p.close FROM prices p "
+                    f"INNER JOIN (SELECT symbol, MAX(date) AS md FROM prices WHERE symbol IN ({placeholders}) GROUP BY symbol) m "
+                    f"ON p.symbol=m.symbol AND p.date=m.md",
+                    symbols,
+                ).fetchall()
+            }
+
+            # 남은 거래일: 추천일 이후 market_index 거래일 수 계산
+            trading_dates = [
+                r[0] for r in conn.execute(
+                    "SELECT date FROM market_index WHERE code='1001' ORDER BY date"
+                ).fetchall()
+            ]
+            trading_set = set(trading_dates)
+
+            today_str = trading_dates[-1] if trading_dates else ""
+
+            def days_elapsed(from_date: str) -> int:
+                try:
+                    idx_from = trading_dates.index(from_date) if from_date in trading_set else None
+                    idx_to = trading_dates.index(today_str) if today_str in trading_set else None
+                    if idx_from is None or idx_to is None:
+                        return 0
+                    return max(0, idx_to - idx_from)
+                except Exception:
+                    return 0
+
+            result_positions = []
+            for p in positions:
+                sym = p["symbol"]
+                rec_price = p["recommended_price"] or 0
+                cur_price = latest_prices.get(sym)
+                pnl_pct = round((cur_price - rec_price) / rec_price * 100, 2) if cur_price and rec_price else None
+                elapsed = days_elapsed(p["recommended_date"])
+                remaining = max(0, (p["horizon"] or 60) - elapsed)
+
+                name_row = conn.execute("SELECT name FROM stocks WHERE symbol=?", (sym,)).fetchone()
+                name = name_row["name"] if name_row else sym
+
+                result_positions.append({
+                    "symbol": sym,
+                    "name": name,
+                    "recommended_date": p["recommended_date"],
+                    "horizon": p["horizon"],
+                    "elapsed_days": elapsed,
+                    "remaining_days": remaining,
+                    "recommended_price": rec_price,
+                    "current_price": cur_price,
+                    "pnl_pct": pnl_pct,
+                })
+
+            pnl_values = [pos["pnl_pct"] for pos in result_positions if pos["pnl_pct"] is not None]
+            avg_pnl = round(sum(pnl_values) / len(pnl_values), 2) if pnl_values else None
+
+            sorted_by_pnl = sorted(
+                [p for p in result_positions if p["pnl_pct"] is not None],
+                key=lambda x: x["pnl_pct"],
+            )
+            best = sorted_by_pnl[-1] if sorted_by_pnl else None
+            worst = sorted_by_pnl[0] if sorted_by_pnl else None
+
+            return {
+                "count": len(result_positions),
+                "avg_pnl_pct": avg_pnl,
+                "best": best,
+                "worst": worst,
+                "positions": result_positions,
+            }
+    except Exception as exc:
+        logger.exception("open-summary 오류: %s", exc)
+        return {"count": 0, "positions": [], "avg_pnl_pct": None, "best": None, "worst": None}
 
 
 @app.get("/api/paper/shadow-vs-live", summary="G2 게이트 on(실제) vs off(shadow) 성과 비교")
@@ -2007,15 +2232,28 @@ def _compute_dps_map() -> Dict[str, float]:
     한 종목은 (미조정)DPS와 (분할조정된)현재 종가의 스케일이 어긋나 수익률이 부풀려짐
     (미원화학 10배, INVENI 5배 등). 검증 경로(backend/ml/dividend_split_correction.py,
     dividend_yield_pit_validation.py의 load_dividend_yield_pit())와 동일한 보정계수를
-    적용해 화면에 보이는 스크리너 고배당 필터의 정확도를 검증 결과와 일치시킴."""
+    적용해 화면에 보이는 스크리너 고배당 필터의 정확도를 검증 결과와 일치시킴.
+
+    [2026-07-30] 스테일 DPS 필터 추가 — MAX(biz_year)에 recency 제한 없으면 배당을 수년 전
+    중단한 종목(엑세바이오 2022년, 씨앤투스 2021년 등)이 현재가 급락 후에도 옛 DPS로
+    40%+ 허수 수익률을 표시함. biz_year >= current_year-2 조건으로 구 DPS 자동 제외.
+
+    [2026-07-30] 서브쿼리 dps NULL 제외 — 서브쿼리 MAX(biz_year) 계산 시 dps=NULL인 행
+    (오리온홀딩스 2025년 등, 공시 지연으로 biz_year 행은 있으나 DPS 미집계)이 포함되면
+    그 biz_year가 최신으로 선택되고 → 메인 WHERE의 dps IS NOT NULL에서 제외돼 전체 누락.
+    직전 유효 biz_year(2024)의 dps도 같이 제외되는 이중 버그. 서브쿼리에도 동일 조건 추가."""
+    min_biz_year = datetime.now().year - 2  # 2026 기준 2024 이상만 허용
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
             """
             SELECT symbol, biz_year, dps FROM dividends d1
             WHERE dps IS NOT NULL AND dps < 1000000
+              AND biz_year >= :min_biz_year
               AND biz_year = (SELECT MAX(biz_year) FROM dividends d2
-                               WHERE d2.symbol = d1.symbol AND d2.dps IS NOT NULL AND d2.dps < 1000000)
-            """
+                               WHERE d2.symbol = d1.symbol AND d2.biz_year >= :min_biz_year
+                                 AND d2.dps IS NOT NULL AND d2.dps < 1000000)
+            """,
+            {"min_biz_year": min_biz_year}
         ).fetchall()
     factors = _load_split_correction_factors()
     return {
@@ -2029,6 +2267,194 @@ def _get_dps_cached(target_date: str) -> Dict[str, float]:
         _state.dps_cache = _compute_dps_map()
         _state.dps_date = target_date
     return _state.dps_cache
+
+
+def _compute_special_div_map() -> Dict[str, bool]:
+    """payout_ratio > 100%인 종목 플래그 — 특별배당 포함 가능성 표시용. 모델/필터 미개입.
+    _compute_dps_map()과 동일한 biz_year 선택 로직 사용 (서브쿼리 dps NULL 제외 포함)."""
+    min_biz_year = datetime.now().year - 2
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT symbol, payout_ratio FROM dividends d1
+            WHERE dps IS NOT NULL AND dps < 1000000
+              AND biz_year >= :min_biz_year
+              AND biz_year = (SELECT MAX(biz_year) FROM dividends d2
+                               WHERE d2.symbol = d1.symbol AND d2.biz_year >= :min_biz_year
+                                 AND d2.dps IS NOT NULL AND d2.dps < 1000000)
+            """,
+            {"min_biz_year": min_biz_year}
+        ).fetchall()
+    return {
+        str(sym).zfill(6): bool(pr is not None and pr > 100)
+        for sym, pr in rows
+    }
+
+
+def _get_special_div_cached(target_date: str) -> Dict[str, bool]:
+    if _state.special_div_cache is None or _state.special_div_date != target_date:
+        _state.special_div_cache = _compute_special_div_map()
+        _state.special_div_date = target_date
+    return _state.special_div_cache
+
+
+def _compute_split_adjusted_map() -> Dict[str, bool]:
+    """CF ≠ 1.0 종목 플래그 — 주식병합/분할 보정이 적용된 배당수익률 표시용. 모델/필터 미개입.
+    payout_ratio=None(EPS음수)인 경우에도 병합환산 상황을 감지 (웅진씽크빅 사례).
+    has_special_dividend(payout>100%)와 독립적으로 병기됨.
+    _compute_dps_map()과 동일한 biz_year 선택 로직 사용 (서브쿼리 dps NULL 제외 포함)."""
+    min_biz_year = datetime.now().year - 2
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT symbol, biz_year FROM dividends d1
+            WHERE dps IS NOT NULL AND dps < 1000000
+              AND biz_year >= :min_biz_year
+              AND biz_year = (SELECT MAX(biz_year) FROM dividends d2
+                               WHERE d2.symbol = d1.symbol AND d2.biz_year >= :min_biz_year
+                                 AND d2.dps IS NOT NULL AND d2.dps < 1000000)
+            """,
+            {"min_biz_year": min_biz_year}
+        ).fetchall()
+    factors = _load_split_correction_factors()
+    result: Dict[str, bool] = {}
+    for sym, biz_year in rows:
+        sym_z = str(sym).zfill(6)
+        cf = factors.get((sym_z, biz_year), 1.0)
+        result[sym_z] = (cf != 1.0)
+    return result
+
+
+def _get_split_adj_cached(target_date: str) -> Dict[str, bool]:
+    if _state.split_adj_cache is None or _state.split_adj_date != target_date:
+        _state.split_adj_cache = _compute_split_adjusted_map()
+        _state.split_adj_date = target_date
+    return _state.split_adj_cache
+
+
+def _compute_div_suspended_map() -> Dict[str, bool]:
+    """배당중단의심 플래그: 현재 사용 중인 biz_year가 2024년인데(FY2025 데이터 없음)
+    FY2025 행이 dps=NULL로 존재하는 종목 — 배당을 중단했을 가능성이 높음.
+    모델/필터 미개입, 표시 배지 전용."""
+    cur_year = datetime.now().year   # 2026
+    prev_year = cur_year - 1        # 2025
+    min_biz_year = cur_year - 2     # 2024
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT d1.symbol FROM dividends d1
+            WHERE d1.dps IS NOT NULL AND d1.dps < 1000000
+              AND d1.biz_year = :min_biz_year
+              AND d1.biz_year = (
+                SELECT MAX(biz_year) FROM dividends d2
+                WHERE d2.symbol = d1.symbol
+                  AND d2.biz_year >= :min_biz_year
+                  AND d2.dps IS NOT NULL AND d2.dps < 1000000
+              )
+              AND EXISTS (
+                SELECT 1 FROM dividends d3
+                WHERE d3.symbol = d1.symbol
+                  AND d3.biz_year = :prev_year
+                  AND d3.dps IS NULL
+              )
+            """,
+            {"min_biz_year": min_biz_year, "prev_year": prev_year},
+        ).fetchall()
+    return {str(sym).zfill(6): True for (sym,) in rows}
+
+
+def _get_div_suspended_cached(target_date: str) -> Dict[str, bool]:
+    if _state.div_suspended_cache is None or _state.div_suspended_date != target_date:
+        _state.div_suspended_cache = _compute_div_suspended_map()
+        _state.div_suspended_date = target_date
+    return _state.div_suspended_cache
+
+
+def _compute_actual_yield_map() -> Dict[str, float]:
+    """실질 배당수익률 = 보정DPS ÷ 배당기준일(record_date) 주가.
+    투자자가 배당기준일에 주식을 보유했을 때 실제로 받은 수익률 기준.
+
+    prices 테이블은 pykrx adjusted=True(전기간 분할조정 가격)이고 DPS도 동일한 스케일로
+    correction_factor 보정됨 → adjusted_dps / adjusted_record_price = 실제 DPS / 실제 주가.
+
+    조회 우선순위:
+      1. prices.date = record_date (정확 매칭, 99.5%)
+      2. prices.date <= record_date ORDER BY date DESC (가장 가까운 이전 거래일, 0.5% 폴백)
+      record_date NULL인 경우 biz_year||'1231' 사용 (2021 이전 — min_biz_year=2024라 실질 미발생)
+    """
+    min_biz_year = datetime.now().year - 2  # 2026 기준 2024 이상
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                d1.symbol, d1.biz_year, d1.dps,
+                (SELECT p.close FROM prices p
+                 WHERE p.symbol = d1.symbol
+                   AND p.date <= COALESCE(d1.record_date, CAST(d1.biz_year AS TEXT) || '1231')
+                 ORDER BY p.date DESC LIMIT 1) AS record_close
+            FROM dividends d1
+            WHERE d1.dps IS NOT NULL AND d1.dps < 1000000
+              AND d1.biz_year >= :min_biz_year
+              AND d1.biz_year = (SELECT MAX(biz_year) FROM dividends d2
+                                  WHERE d2.symbol = d1.symbol AND d2.biz_year >= :min_biz_year
+                                    AND d2.dps IS NOT NULL AND d2.dps < 1000000)
+            """,
+            {"min_biz_year": min_biz_year},
+        ).fetchall()
+    factors = _load_split_correction_factors()
+    result: Dict[str, float] = {}
+    for sym, biz_year, dps, record_close in rows:
+        if not record_close:
+            continue
+        sym_z = str(sym).zfill(6)
+        cf = factors.get((sym_z, biz_year), 1.0)
+        result[sym_z] = dps * cf / record_close * 100
+    return result
+
+
+def _get_actual_yield_cached(target_date: str) -> Dict[str, float]:
+    if _state.actual_yield_cache is None or _state.actual_yield_date != target_date:
+        _state.actual_yield_cache = _compute_actual_yield_map()
+        _state.actual_yield_date = target_date
+    return _state.actual_yield_cache
+
+
+def _compute_foreign_rate_map() -> Dict[str, float]:
+    """종목별 최신 외국인 보유비율(%) — flows.foreign_net 표시 전용."""
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("""
+            SELECT symbol, foreign_net
+            FROM (
+                SELECT symbol, foreign_net,
+                       ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+                FROM flows
+                WHERE foreign_net IS NOT NULL
+            )
+            WHERE rn = 1
+        """).fetchall()
+    return {str(sym).zfill(6): rate for sym, rate in rows}
+
+
+def _get_foreign_rate_cached(target_date: str) -> Dict[str, float]:
+    if _state.foreign_rate_cache is None or _state.foreign_rate_date != target_date:
+        _state.foreign_rate_cache = _compute_foreign_rate_map()
+        _state.foreign_rate_date = target_date
+    return _state.foreign_rate_cache
+
+
+def _load_verified_yield_whitelist() -> set:
+    """DART로 검증 완료된 고배당 종목 심볼 집합 반환.
+    .dividend_yield_verified.json 파일 기반 — 수동 관리."""
+    import json as _json
+    path = BACKEND_ROOT / "data" / ".dividend_yield_verified.json"
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        return set(data.get("verified", {}).keys())
+    except FileNotFoundError:
+        return set()
+    except Exception as e:
+        logger.warning("배당수익률 화이트리스트 로드 실패: %s", e)
+        return set()
 
 
 def _compute_eps_map() -> Dict[str, float]:
@@ -2171,6 +2597,7 @@ def _compute_dps_growth_map() -> Dict[str, bool]:
         sym_years[str(sym).zfill(6)].append((biz_year, dps))
 
     factors = _load_split_correction_factors()
+    min_biz_year = datetime.now().year - 2  # 2026 기준 2024 이상: 배당 중단 종목 제외
     growths: Dict[str, float] = {}
     for sym, yearly in sym_years.items():
         yearly.sort(key=lambda x: x[0])
@@ -2178,6 +2605,8 @@ def _compute_dps_growth_map() -> Dict[str, bool]:
             continue
         prev_biz_year, prev_dps = yearly[-2]
         curr_biz_year, curr_dps = yearly[-1]
+        if curr_biz_year < min_biz_year:
+            continue  # 가장 최근 배당 자체가 오래됨 — 현재 배당 종목 아님
         prev_adj = prev_dps * factors.get((sym, prev_biz_year), 1.0)
         curr_adj = curr_dps * factors.get((sym, curr_biz_year), 1.0)
         if prev_adj <= 0:
@@ -2285,7 +2714,7 @@ async def screener(
 
         rows = conn.execute(
             """
-            SELECT f.symbol, s.name, s.market, p.close,
+            SELECT f.symbol, s.name, s.market, s.sector, p.close,
                    f.per, f.pbr, f.rsi_14, f.bb_pct, f.vol_ratio_20d, f.ret_20d, f.atr_pct
             FROM features f
             JOIN stocks s ON f.symbol = s.symbol
@@ -2296,6 +2725,10 @@ async def screener(
         ).fetchall()
 
     stocks = [dict(r) for r in rows if not _SCREENER_ETF_PATTERN.search(r["name"] or "")]
+
+    # 섹터명 (KSIC 3자리 매핑)
+    for s in stocks:
+        s["sector_name"] = _sector_name(s.get("sector"))
 
     # PIT PER/PBR (dividends.eps, financials.bps 역산 — look-ahead 없음)
     eps_map = _get_eps_cached(target_date)
@@ -2319,10 +2752,37 @@ async def screener(
     # 배당 관련 맵
     dps_map = _get_dps_cached(target_date)
     dps_growth_map = _get_dps_growth_cached(target_date)
+    special_div_map = _get_special_div_cached(target_date)
+    split_adj_map = _get_split_adj_cached(target_date)
+    div_suspended_map = _get_div_suspended_cached(target_date)
+    actual_yield_map = _get_actual_yield_cached(target_date)
+    verified_yield_symbols = _load_verified_yield_whitelist()
     for s in stocks:
         dps = dps_map.get(s["symbol"])
+        # dividend_yield = (DPS × CF) ÷ 현재종가 — trailing yield.
+        #   필터 판정("고배당 상위 20%")과 백테스트(combo_discovery_v2.py)가 이 값을 씀.
+        #   백테스트: `dps_corr / prices["close"]` — 동일 공식. train-serving skew 없음.
+        # actual_yield   = (DPS × CF) ÷ 배당기준일종가 — 역사적 고정값.
+        #   표시(배당 컬럼 숫자)와 정렬(sort_key_map["dividend_yield"])에만 사용.
+        #   투자자가 배당락일 시점의 실제 수익률을 보도록 하기 위함.
         s["dividend_yield"] = (dps / s["close"] * 100) if dps and s["close"] else None
+        s["actual_yield"] = actual_yield_map.get(s["symbol"])
         s["dps_growth"] = dps_growth_map.get(s["symbol"], False)
+        s["has_special_dividend"] = special_div_map.get(s["symbol"], False)
+        s["has_split_adjusted"] = split_adj_map.get(s["symbol"], False)
+        s["has_div_suspended"] = div_suspended_map.get(s["symbol"], False)
+        ay = s.get("actual_yield")
+        # DART 검증 완료 종목(화이트리스트)은 미검증 뱃지 제외
+        is_verified = s["symbol"] in verified_yield_symbols
+        s["has_unverified_yield"] = (
+            ay is not None
+            and ay > 15
+            and not is_verified
+            and not s["has_special_dividend"]
+            and not s["has_split_adjusted"]
+            and not s["has_div_suspended"]
+        )
+    # 필터 판정용 횡단면 순위 기반. dividend_yield(trailing) 기준 — 백테스트와 동일.
     div_vals = sorted(s["dividend_yield"] for s in stocks if s["dividend_yield"] is not None)
 
     # 60d PIT 팩터 (EPS성장/ROE/BPS성장 — 모든 요청에서 계산, 캐시됨)
@@ -2350,6 +2810,11 @@ async def screener(
     score_vals = sorted(scores_60d_map.values()) if scores_60d_map else []
     for s in stocks:
         s["score_60d"] = scores_60d_map.get(s["symbol"])
+
+    # 외국인 보유비율 (flows.foreign_net 최신값 — 표시 전용)
+    foreign_rate_map = _get_foreign_rate_cached(target_date)
+    for s in stocks:
+        s["foreign_rate"] = foreign_rate_map.get(s["symbol"])
 
     # 시장 국면 (필터 모드/프로파일 모드 공통)
     market = _get_market_trend_cached(target_date)
@@ -2432,15 +2897,1079 @@ async def screener(
         "per": lambda s: s["per_pit"] if s["per_pit"] is not None else float("inf"),
         "pbr": lambda s: s["pbr_pit"] if s["pbr_pit"] is not None else float("inf"),
         "rsi_14": lambda s: s["rsi_14"] if s["rsi_14"] is not None else float("inf"),
-        "dividend_yield": lambda s: s["dividend_yield"] if s["dividend_yield"] is not None else -1,
+        "dividend_yield": lambda s: (
+            s.get("actual_yield") if s.get("actual_yield") is not None
+            else (s["dividend_yield"] if s["dividend_yield"] is not None else -1)
+        ),
         "vol_ratio_20d": lambda s: s["vol_ratio_20d"] if s["vol_ratio_20d"] is not None else -1,
         "ret_20d": lambda s: s["ret_20d"] if s["ret_20d"] is not None else -1,
+        "score_60d": lambda s: s["score_60d"] if s["score_60d"] is not None else -1,
     }
     key_fn = sort_key_map.get(sort_by, sort_key_map["symbol"])
     filtered.sort(key=key_fn, reverse=(sort_dir == "desc"))
     filtered = filtered[:limit]
 
     return {"date": target_date, "market_regime": regime, "total": len(filtered), "stocks": filtered}
+
+
+@app.get("/api/screener/cross-analysis", summary="검증된 6개 조합 교차 분석 — 2개 이상 조합에 동시 포함된 종목")
+async def screener_cross_analysis() -> Dict[str, Any]:
+    """검증된 COMBO_PRESETS 6개를 동시에 실행해 2개 이상에 해당하는 종목을 반환."""
+    CROSS_PRESETS = [
+        {"label": "고배당+저PBR+60d상위20%", "keys": ["high_dividend", "low_pbr", "score_60d_top20"], "oos_rate": "76.1%"},
+        {"label": "고배당+저PER+60d상위10%", "keys": ["high_dividend", "low_per", "score_60d_top10"], "oos_rate": "75.7%"},
+        {"label": "고배당+저PER",            "keys": ["high_dividend", "low_per"],                    "oos_rate": "71.9%"},
+        {"label": "고배당+저PBR",            "keys": ["high_dividend", "low_pbr"],                    "oos_rate": "68.8%"},
+        {"label": "고배당+배당성장",          "keys": ["high_dividend", "div_growth"],                 "oos_rate": "67.5%"},
+        {"label": "저PBR+배당성장",           "keys": ["low_pbr",       "div_growth"],                 "oos_rate": "63.9%"},
+    ]
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        target_date = conn.execute("SELECT MAX(date) FROM features").fetchone()[0]
+        if target_date is None:
+            raise HTTPException(status_code=503, detail="features 데이터 없음")
+        rows = conn.execute(
+            """
+            SELECT f.symbol, s.name, s.market, s.sector, p.close,
+                   f.per, f.pbr, f.rsi_14, f.bb_pct, f.vol_ratio_20d, f.ret_20d, f.atr_pct
+            FROM features f
+            JOIN stocks s ON f.symbol = s.symbol
+            JOIN prices p ON p.symbol = f.symbol AND p.date = f.date
+            WHERE f.date = ?
+            """,
+            (target_date,),
+        ).fetchall()
+
+    stocks = [dict(r) for r in rows if not _SCREENER_ETF_PATTERN.search(r["name"] or "")]
+
+    # 섹터명
+    for s in stocks:
+        s["sector_name"] = _sector_name(s.get("sector"))
+
+    # PIT PER/PBR
+    eps_map = _get_eps_cached(target_date)
+    bps_map = _get_bps_cached(target_date)
+    for s in stocks:
+        eps = eps_map.get(s["symbol"])
+        s["per_pit"] = (s["close"] / eps) if eps and eps > 0 else None
+        bps = bps_map.get(s["symbol"])
+        s["pbr_pit"] = (s["close"] / bps) if bps and bps > 0 else None
+
+    per_pit_vals = sorted(s["per_pit"] for s in stocks if s["per_pit"] is not None and s["per_pit"] > 0)
+    pbr_pit_vals = sorted(s["pbr_pit"] for s in stocks if s["pbr_pit"] is not None and s["pbr_pit"] > 0)
+
+    def _pct_rank_local(sorted_vals: List[float], v: Optional[float]) -> Optional[float]:
+        if v is None or not sorted_vals:
+            return None
+        return bisect.bisect_right(sorted_vals, v) / len(sorted_vals)
+
+    # 배당 관련
+    dps_map        = _get_dps_cached(target_date)
+    dps_growth_map = _get_dps_growth_cached(target_date)
+    actual_yield_map = _get_actual_yield_cached(target_date)
+    for s in stocks:
+        dps = dps_map.get(s["symbol"])
+        s["dividend_yield"] = (dps / s["close"] * 100) if dps and s["close"] else None
+        s["actual_yield"]   = actual_yield_map.get(s["symbol"])
+        s["dps_growth"]     = dps_growth_map.get(s["symbol"], False)
+
+    div_vals = sorted(s["dividend_yield"] for s in stocks if s["dividend_yield"] is not None)
+
+    # 60d 모델 점수 (cross-analysis 프리셋 2개가 score_60d 필터를 사용)
+    scores_60d_map = _get_scores_60d_cached(target_date)
+    score_vals     = sorted(scores_60d_map.values()) if scores_60d_map else []
+    for s in stocks:
+        s["score_60d"] = scores_60d_map.get(s["symbol"])
+
+    def _passes(s: Dict[str, Any], key: str) -> bool:
+        if key == "high_dividend":
+            return s["dividend_yield"] is not None and (_pct_rank_local(div_vals, s["dividend_yield"]) or 0) >= 0.8
+        if key == "low_per":
+            return s["per_pit"] is not None and s["per_pit"] > 0 and (_pct_rank_local(per_pit_vals, s["per_pit"]) or 1) <= 0.2
+        if key == "low_pbr":
+            return s["pbr_pit"] is not None and (_pct_rank_local(pbr_pit_vals, s["pbr_pit"]) or 1) <= 0.2
+        if key == "div_growth":
+            return bool(s["dps_growth"])
+        if key == "score_60d_top20":
+            return s["score_60d"] is not None and bool(score_vals) and (_pct_rank_local(score_vals, s["score_60d"]) or 0) >= 0.8
+        if key == "score_60d_top10":
+            return s["score_60d"] is not None and bool(score_vals) and (_pct_rank_local(score_vals, s["score_60d"]) or 0) >= 0.9
+        return False
+
+    result: List[Dict[str, Any]] = []
+    for s in stocks:
+        combo_flags = [all(_passes(s, k) for k in p["keys"]) for p in CROSS_PRESETS]
+        combo_count = sum(combo_flags)
+        if combo_count >= 2:
+            result.append({
+                "symbol":         s["symbol"],
+                "name":           s["name"],
+                "market":         s["market"],
+                "close":          s["close"],
+                "dividend_yield": s["dividend_yield"],
+                "actual_yield":   s.get("actual_yield"),
+                "score_60d":      s["score_60d"],
+                "per":            s["per_pit"],
+                "pbr":            s["pbr_pit"],
+                "combo_count":    combo_count,
+                "combo_flags":    combo_flags,
+            })
+
+    result.sort(key=lambda x: (-x["combo_count"], -(x["dividend_yield"] or 0)))
+
+    return {
+        "date":    target_date,
+        "presets": CROSS_PRESETS,
+        "total":   len(result),
+        "stocks":  result,
+    }
+
+
+@app.get("/api/screener/sector-flow", summary="KSIC 섹터별 외국인·기관·연기금 자금흐름 집계")
+async def screener_sector_flow() -> Dict[str, Any]:
+    """investor_trading_kis 기반 5d/20d/60d 섹터 자금흐름. 표시 전용."""
+    import json as _json
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        target_date = conn.execute("SELECT MAX(date) FROM features").fetchone()[0]
+        if target_date is None:
+            raise HTTPException(status_code=503, detail="features 데이터 없음")
+
+    # 일별 캐시
+    if _state.sector_flow_cache and _state.sector_flow_date == target_date:
+        return _state.sector_flow_cache
+
+    # KSIC 3자리 → 한국어 이름 맵
+    ksic_path = Path(__file__).parent.parent / "data" / "ksic_sector_names.json"
+    try:
+        ksic_names: Dict[str, str] = _json.loads(ksic_path.read_text(encoding="utf-8"))
+    except Exception:
+        ksic_names = {}
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+
+        # 거래일 컷오프: 5d / prior5d / 20d / 60d / 120d / 250d
+        # DISTINCT + WHERE code='1001' 필수 — market_index는 KOSPI/KOSDAQ 2행/일이라
+        # DISTINCT 없으면 260행 = 130 고유 날짜 → 120d/250d가 실제로 60d/125d가 되는 버그
+        all_dates = [r[0] for r in conn.execute(
+            "SELECT DISTINCT date FROM market_index WHERE code='1001' ORDER BY date DESC LIMIT 260"
+        ).fetchall()]
+        if len(all_dates) < 10:
+            raise HTTPException(status_code=503, detail="market_index 날짜 부족")
+
+        cutoff_5d   = all_dates[5]   if len(all_dates) > 5   else all_dates[-1]
+        cutoff_10d  = all_dates[10]  if len(all_dates) > 10  else all_dates[-1]
+        cutoff_20d  = all_dates[20]  if len(all_dates) > 20  else all_dates[-1]
+        cutoff_60d  = all_dates[60]  if len(all_dates) > 60  else all_dates[-1]
+        cutoff_120d = all_dates[120] if len(all_dates) > 120 else all_dates[-1]
+        cutoff_250d = all_dates[250] if len(all_dates) > 250 else all_dates[-1]
+
+        logger.info(
+            "sector-flow cutoffs — 5d:%s 20d:%s 60d:%s 120d:%s 250d:%s",
+            cutoff_5d, cutoff_20d, cutoff_60d, cutoff_120d, cutoff_250d,
+        )
+
+        # 종목 → 섹터 3자리 코드 맵 (stocks.sector = DART induty_code)
+        sym_sector: Dict[str, str] = {}
+        sym_name: Dict[str, str] = {}
+        for r in conn.execute("SELECT symbol, name, sector FROM stocks WHERE sector IS NOT NULL").fetchall():
+            code3 = str(r["sector"] or "")[:3]
+            if code3.isdigit():
+                sym_sector[r["symbol"]] = code3
+                sym_name[r["symbol"]] = r["name"] or r["symbol"]
+
+        # 섹터별 종목 수 집계 → 10개 미만 제외
+        from collections import defaultdict as _defaultdict
+        sector_symbols: Dict[str, list] = _defaultdict(list)
+        for sym, code3 in sym_sector.items():
+            sector_symbols[code3].append(sym)
+        valid_sectors = {c for c, syms in sector_symbols.items() if len(syms) >= 10}
+
+        # 외국인+기관 순매수 (5d ~ 250d)
+        # investor_trading_kis_detail: 2020-12-21 ~ (full history, foreign_value + inst_total_value)
+        # investor_trading_kis: 2026-03-25 ~ (rolling 30d collection, foreign_net_value + inst_net_value)
+        # detail.foreign_value = kis.foreign_net_value (검증됨)
+        # 250d(약 1년) 범위를 올바르게 덮으려면 detail을 메인으로, detail 종료 이후는 kis로 보완
+        # value 컬럼 단위: 백만원. 억원으로 변환 = ÷100
+        _det_max_date = (conn.execute(
+            "SELECT MAX(date) FROM investor_trading_kis_detail"
+        ).fetchone()[0] or "20200101")
+
+        kis_rows = conn.execute(
+            """
+            SELECT symbol, date,
+                   foreign_value    AS fv,
+                   inst_total_value AS iv
+            FROM investor_trading_kis_detail
+            WHERE date >= ?
+            UNION ALL
+            SELECT symbol, date,
+                   foreign_net_value AS fv,
+                   inst_net_value    AS iv
+            FROM investor_trading_kis
+            WHERE date > ? AND date >= ?
+            """,
+            (cutoff_250d, _det_max_date, cutoff_250d),
+        ).fetchall()
+
+        # investor_trading_kis_detail: pension (best-effort, stale)
+        pension_rows = conn.execute(
+            """
+            SELECT k.symbol, k.date,
+                   k.pension_value AS pv
+            FROM investor_trading_kis_detail k
+            WHERE k.date >= ? AND k.pension_value IS NOT NULL
+            """,
+            (cutoff_250d,),
+        ).fetchall()
+
+        # 연기금 최신 데이터 날짜 (매일 수집 안 됨 — 표시용)
+        pension_latest_row = conn.execute(
+            "SELECT MAX(date) AS d FROM investor_trading_kis_detail"
+            " WHERE pension_value IS NOT NULL AND pension_value != 0"
+        ).fetchone()
+        pension_latest_date: Optional[str] = pension_latest_row["d"] if pension_latest_row else None
+
+    # ── 섹터별 집계 ──────────────────────────────────────────────────────
+    from collections import defaultdict as _dd2
+
+    # kis_rows → {symbol: {date: (fv, iv)}}
+    sym_kis: Dict[str, Dict[str, tuple]] = _dd2(dict)
+    for r in kis_rows:
+        sym_kis[r["symbol"]][r["date"]] = (r["fv"] or 0.0, r["iv"] or 0.0)
+
+    sym_pension: Dict[str, Dict[str, float]] = _dd2(dict)
+    for r in pension_rows:
+        sym_pension[r["symbol"]][r["date"]] = r["pv"] or 0.0
+
+    def _sum_range(sym: str, since: str) -> tuple:
+        """(foreign_억, inst_억, pension_억)"""
+        f_tot = i_tot = p_tot = 0.0
+        for dt, (fv, iv) in sym_kis.get(sym, {}).items():
+            if dt >= since:
+                f_tot += fv
+                i_tot += iv
+        for dt, pv in sym_pension.get(sym, {}).items():
+            if dt >= since:
+                p_tot += pv
+        return f_tot / 100, i_tot / 100, p_tot / 100
+
+    # 섹터별 집계
+    sector_agg: Dict[str, Dict[str, float]] = {}
+    pension_has_data: Dict[str, bool] = {}
+    sym_5d_values:   Dict[str, tuple] = {}  # {symbol: (foreign_5d,   inst_5d)}
+    sym_20d_values:  Dict[str, tuple] = {}  # {symbol: (foreign_20d,  inst_20d)}
+    sym_60d_values:  Dict[str, tuple] = {}  # {symbol: (foreign_60d,  inst_60d)}
+    sym_120d_values: Dict[str, tuple] = {}  # {symbol: (foreign_120d, inst_120d)}
+    sym_250d_values: Dict[str, tuple] = {}  # {symbol: (foreign_250d, inst_250d)}
+
+    for code3 in valid_sectors:
+        syms = sector_symbols[code3]
+        f5 = i5 = p5 = f10 = i10 = f20 = i20 = p20 = f60 = i60 = p60 = 0.0
+        f120 = i120 = p120 = f250 = i250 = p250 = 0.0
+        has_p_5d = has_p_20d = has_p_60d = has_p_120d = has_p_250d = False
+        for s in syms:
+            a, b, c = _sum_range(s, cutoff_5d)
+            f5 += a; i5 += b; p5 += c
+            sym_5d_values[s] = (a, b)
+            a10, b10, _ = _sum_range(s, cutoff_10d)
+            f10 += a10; i10 += b10
+            a20, b20, c20 = _sum_range(s, cutoff_20d)
+            f20 += a20; i20 += b20; p20 += c20
+            sym_20d_values[s] = (a20, b20)
+            a60, b60, c60 = _sum_range(s, cutoff_60d)
+            f60 += a60; i60 += b60; p60 += c60
+            sym_60d_values[s] = (a60, b60)
+            a120, b120, c120 = _sum_range(s, cutoff_120d)
+            f120 += a120; i120 += b120; p120 += c120
+            sym_120d_values[s] = (a120, b120)
+            a250, b250, c250 = _sum_range(s, cutoff_250d)
+            f250 += a250; i250 += b250; p250 += c250
+            sym_250d_values[s] = (a250, b250)
+            # has_p 기간별 체크 (sym_pension은 이미 cutoff_250d 이후만 포함)
+            for dt, pv in sym_pension.get(s, {}).items():
+                if pv:
+                    has_p_250d = True
+                    if dt >= cutoff_120d:
+                        has_p_120d = True
+                    if dt >= cutoff_60d:
+                        has_p_60d = True
+                    if dt >= cutoff_20d:
+                        has_p_20d = True
+                    if dt >= cutoff_5d:
+                        has_p_5d = True
+        prior5_f = f10 - f5
+        prior5_i = i10 - i5
+        prior5_comb = prior5_f + prior5_i
+        comb5 = f5 + i5
+        momentum = (comb5 / prior5_comb) if abs(prior5_comb) > 0.01 else None
+        sector_agg[code3] = {
+            "foreign_5d":    round(f5,   1),
+            "inst_5d":       round(i5,   1),
+            "pension_5d":    round(p5,   1) if has_p_5d   else None,
+            "combined_5d":   round(comb5, 1),
+            "foreign_20d":   round(f20,  1),
+            "inst_20d":      round(i20,  1),
+            "pension_20d":   round(p20,  1) if has_p_20d  else None,
+            "combined_20d":  round(f20+i20,  1),
+            "foreign_60d":   round(f60,  1),
+            "inst_60d":      round(i60,  1),
+            "pension_60d":   round(p60,  1) if has_p_60d  else None,
+            "combined_60d":  round(f60+i60,  1),
+            "foreign_120d":  round(f120, 1),
+            "inst_120d":     round(i120, 1),
+            "pension_120d":  round(p120, 1) if has_p_120d else None,
+            "combined_120d": round(f120+i120, 1),
+            "foreign_250d":  round(f250, 1),
+            "inst_250d":     round(i250, 1),
+            "pension_250d":  round(p250, 1) if has_p_250d else None,
+            "combined_250d": round(f250+i250, 1),
+            "momentum_5d":   round(momentum, 2) if momentum is not None else None,
+        }
+        pension_has_data[code3] = has_p_5d or has_p_20d or has_p_60d or has_p_120d or has_p_250d
+
+    # ── 교차 분석 종목 per 섹터 (max 6) ─────────────────────────────────
+    dps_map        = _get_dps_cached(target_date)
+    dps_growth_map = _get_dps_growth_cached(target_date)
+    eps_map        = _get_eps_cached(target_date)
+    bps_map        = _get_bps_cached(target_date)
+    scores_60d_map = _get_scores_60d_cached(target_date)
+
+    # cross_analysis stock 집합 (2개 이상 조합 통과)
+    CROSS_KEYS = [
+        ["high_dividend", "low_pbr", "score_60d_top20"],
+        ["high_dividend", "low_per", "score_60d_top10"],
+        ["high_dividend", "low_per"],
+        ["high_dividend", "low_pbr"],
+        ["high_dividend", "div_growth"],
+        ["low_pbr",       "div_growth"],
+    ]
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        feature_rows = conn.execute(
+            """
+            SELECT f.symbol, p.close
+            FROM features f
+            JOIN prices p ON p.symbol=f.symbol AND p.date=f.date
+            WHERE f.date=?
+            """,
+            (target_date,),
+        ).fetchall()
+
+    close_map: Dict[str, float] = {r["symbol"]: r["close"] for r in feature_rows}
+
+    all_syms = list(close_map.keys())
+    per_pit_vals = sorted(
+        (close_map[s] / eps_map[s]) for s in all_syms
+        if eps_map.get(s) and eps_map[s] > 0 and s in close_map
+    )
+    pbr_pit_vals = sorted(
+        (close_map[s] / bps_map[s]) for s in all_syms
+        if bps_map.get(s) and bps_map[s] > 0 and s in close_map
+    )
+    div_vals = sorted(
+        (dps_map[s] / close_map[s] * 100) for s in all_syms
+        if dps_map.get(s) and close_map.get(s)
+    )
+    score_vals = sorted(scores_60d_map.values()) if scores_60d_map else []
+
+    def _pct_rank2(sorted_vals: list, v: Optional[float]) -> Optional[float]:
+        if v is None or not sorted_vals:
+            return None
+        return bisect.bisect_right(sorted_vals, v) / len(sorted_vals)
+
+    def _passes2(sym: str, key: str) -> bool:
+        cl = close_map.get(sym)
+        if not cl:
+            return False
+        if key == "high_dividend":
+            dps = dps_map.get(sym)
+            dy = (dps / cl * 100) if dps else None
+            return dy is not None and (_pct_rank2(div_vals, dy) or 0) >= 0.8
+        if key == "low_per":
+            eps = eps_map.get(sym)
+            per = (cl / eps) if eps and eps > 0 else None
+            return per is not None and (_pct_rank2(per_pit_vals, per) or 1) <= 0.2
+        if key == "low_pbr":
+            bps = bps_map.get(sym)
+            pbr = (cl / bps) if bps and bps > 0 else None
+            return pbr is not None and (_pct_rank2(pbr_pit_vals, pbr) or 1) <= 0.2
+        if key == "div_growth":
+            return bool(dps_growth_map.get(sym, False))
+        if key == "score_60d_top20":
+            sc = scores_60d_map.get(sym)
+            return sc is not None and bool(score_vals) and (_pct_rank2(score_vals, sc) or 0) >= 0.8
+        if key == "score_60d_top10":
+            sc = scores_60d_map.get(sym)
+            return sc is not None and bool(score_vals) and (_pct_rank2(score_vals, sc) or 0) >= 0.9
+        return False
+
+    cross_set: set = set()
+    for s in all_syms:
+        cnt = sum(all(_passes2(s, k) for k in keys) for keys in CROSS_KEYS)
+        if cnt >= 2:
+            cross_set.add(s)
+
+    # 섹터별 교차 분석 종목 목록 (max 6, 60d 스코어 내림차순)
+    # score_60d는 raw(0-1) 반환 — 프론트에서 ×100 처리
+    sector_cross: Dict[str, list] = {}
+    for code3 in valid_sectors:
+        cands = [
+            s for s in sector_symbols[code3]
+            if s in cross_set and s in close_map
+        ]
+        cands.sort(key=lambda x: -(scores_60d_map.get(x) or 0))
+        sector_cross[code3] = [
+            {
+                "symbol":      s,
+                "name":        sym_name.get(s, s),
+                "score_60d":   round(scores_60d_map[s], 4) if scores_60d_map.get(s) else None,
+                "combo_count": sum(all(_passes2(s, k) for k in keys) for keys in CROSS_KEYS),
+            }
+            for s in cands[:6]
+        ]
+
+    # 섹터별 전체 종목 목록 (60d 스코어 내림차순, 5d 외국인/기관 순매수 분리)
+    sector_stocks: Dict[str, list] = {}
+    for code3 in valid_sectors:
+        sym_list = []
+        for s in sector_symbols[code3]:
+            if s not in close_map:
+                continue
+            fa,    ia    = sym_5d_values.get(s,   (0.0, 0.0))
+            fa20,  ia20  = sym_20d_values.get(s,  (0.0, 0.0))
+            fa60,  ia60  = sym_60d_values.get(s,  (0.0, 0.0))
+            fa120, ia120 = sym_120d_values.get(s, (0.0, 0.0))
+            fa250, ia250 = sym_250d_values.get(s, (0.0, 0.0))
+            sym_list.append({
+                "symbol":       s,
+                "name":         sym_name.get(s, s),
+                "score_60d":    round(scores_60d_map[s], 4) if scores_60d_map.get(s) else None,
+                "foreign_5d":   round(fa,    1),
+                "inst_5d":      round(ia,    1),
+                "foreign_20d":  round(fa20,  1),
+                "inst_20d":     round(ia20,  1),
+                "foreign_60d":  round(fa60,  1),
+                "inst_60d":     round(ia60,  1),
+                "foreign_120d": round(fa120, 1),
+                "inst_120d":    round(ia120, 1),
+                "foreign_250d": round(fa250, 1),
+                "inst_250d":    round(ia250, 1),
+            })
+        sym_list.sort(key=lambda x: -(x["score_60d"] or 0))
+        sector_stocks[code3] = sym_list
+
+    # ── 응답 조립 ─────────────────────────────────────────────────────────
+    sectors_out = []
+    for code3 in sorted(valid_sectors):
+        agg = sector_agg[code3]
+        sectors_out.append({
+            "code":        code3,
+            "name":        ksic_names.get(code3, f"섹터 {code3}"),
+            "stock_count": len(sector_symbols[code3]),
+            **agg,
+            "pension_available": pension_has_data.get(code3, False),
+            "cross_stocks": sector_cross.get(code3, []),
+            "stocks":       sector_stocks.get(code3, []),
+        })
+
+    # 기본 정렬: combined_5d 내림차순
+    sectors_out.sort(key=lambda x: -x["combined_5d"])
+
+    # 커버리지 통계
+    syms_in_sectors = {s for c in valid_sectors for s in sector_symbols[c] if s in close_map}
+    coverage = {
+        "sector_count":       len(valid_sectors),
+        "symbols_in_sectors": len(syms_in_sectors),
+        "total_universe":     len(close_map),
+    }
+
+    result = {
+        "date":                target_date,
+        "pension_note":        "연기금 데이터는 KIS 종목별 조회 기준으로 최신 30거래일만 제공됩니다. 일부 종목 누락 가능.",
+        "pension_latest_date": pension_latest_date,
+        "cutoffs":             {"5d": cutoff_5d, "20d": cutoff_20d, "60d": cutoff_60d, "120d": cutoff_120d, "250d": cutoff_250d},
+        "coverage":            coverage,
+        "sectors":             sectors_out,
+    }
+    _state.sector_flow_cache = result
+    _state.sector_flow_date  = target_date
+    return result
+
+
+@app.get("/api/screener/sector-flow/analysis", summary="섹터 자금 흐름 종합 분석 보고서")
+async def screener_sector_flow_analysis() -> Dict[str, Any]:
+    """
+    섹터 자금 흐름 데이터를 기반으로 4가지 분석을 제공:
+    1. 기간별 시장 전체 자금 흐름 요약 + 방향 판정
+    2. 섹터 랭킹 (기간별 top5/bottom5) + 일관유입/유출/전환 분류
+    3. 종목 쏠림 분석 (섹터 내 top1 종목 집중도)
+    4. 교차 분석 연결 (6/6 종목의 섹터 흐름 연관)
+    """
+    # sector-flow 캐시 재사용 (없으면 직접 계산 — 같은 날짜 기준)
+    sf = _state.sector_flow_cache
+    if sf is None:
+        # 캐시 미스: sector_flow 엔드포인트 로직을 재호출하여 채움
+        try:
+            sf = await screener_sector_flow()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"sector-flow 데이터 로드 실패: {e}")
+
+    sectors: list = sf.get("sectors", [])
+    if not sectors:
+        raise HTTPException(status_code=503, detail="섹터 데이터 없음")
+
+    # ── 1. 기간별 시장 전체 자금 흐름 요약 ──────────────────────────────────
+    periods = [("5d", "5일"), ("20d", "20일"), ("60d", "60일"), ("120d", "120일"), ("250d", "250일/1년")]
+    market_totals: Dict[str, float] = {}
+    for key, _ in periods:
+        total = sum(s.get(f"combined_{key}", 0) or 0 for s in sectors)
+        market_totals[key] = round(total, 1)
+
+    # 방향 판정: 250d vs 60d vs 5d 비교
+    v250 = market_totals.get("250d", 0)
+    v60  = market_totals.get("60d",  0)
+    v5   = market_totals.get("5d",   0)
+
+    if v250 < 0 and v5 > 0:
+        direction_label = "장기 유출 속 단기 반등"
+        direction_color = "orange"
+    elif v250 > 0 and v5 < 0:
+        direction_label = "장기 유입 속 단기 이탈"
+        direction_color = "orange"
+    elif v250 > 0 and v60 > 0 and v5 > 0:
+        direction_label = "전 기간 일관 유입"
+        direction_color = "green"
+    elif v250 < 0 and v60 < 0 and v5 < 0:
+        direction_label = "전 기간 일관 유출"
+        direction_color = "red"
+    elif v60 > 0 and v5 > 0:
+        direction_label = "중단기 유입 추세"
+        direction_color = "green"
+    elif v60 < 0 and v5 < 0:
+        direction_label = "중단기 유출 추세"
+        direction_color = "red"
+    else:
+        direction_label = "혼조세"
+        direction_color = "gray"
+
+    market_summary = {
+        "totals": {k: market_totals[k] for k, _ in periods},
+        "direction_label": direction_label,
+        "direction_color": direction_color,
+        "period_labels": {k: lbl for k, lbl in periods},
+    }
+
+    # ── 2. 섹터 랭킹 + 일관성 분류 ─────────────────────────────────────────
+    def _sector_rank(period_key: str, top_n: int = 5) -> Dict[str, Any]:
+        sorted_secs = sorted(sectors, key=lambda x: -(x.get(f"combined_{period_key}", 0) or 0))
+        top5    = [{"code": s["code"], "name": s["name"], "value": s.get(f"combined_{period_key}", 0)} for s in sorted_secs[:top_n]]
+        bottom5 = [{"code": s["code"], "name": s["name"], "value": s.get(f"combined_{period_key}", 0)} for s in sorted_secs[-top_n:]]
+        return {"top": top5, "bottom": bottom5}
+
+    sector_rankings = {k: _sector_rank(k) for k, _ in periods}
+
+    # 일관성 분류 (5d/20d/60d 기준)
+    consistent_inflow  = []  # 5d,20d,60d 모두 양수
+    consistent_outflow = []  # 5d,20d,60d 모두 음수
+    short_reversal     = []  # 60d 음수 + 5d 양수 (유출→유입 전환)
+    short_exit         = []  # 60d 양수 + 5d 음수 (유입→유출 이탈)
+
+    for s in sectors:
+        c5  = s.get("combined_5d",  0) or 0
+        c20 = s.get("combined_20d", 0) or 0
+        c60 = s.get("combined_60d", 0) or 0
+        entry = {"code": s["code"], "name": s["name"],
+                 "combined_5d": c5, "combined_20d": c20, "combined_60d": c60,
+                 "has_cross_stocks": bool(s.get("cross_stocks", []))}
+        if c5 > 0 and c20 > 0 and c60 > 0:
+            consistent_inflow.append(entry)
+        elif c5 < 0 and c20 < 0 and c60 < 0:
+            consistent_outflow.append(entry)
+        elif c60 < 0 and c5 > 0:
+            short_reversal.append(entry)
+        elif c60 > 0 and c5 < 0:
+            short_exit.append(entry)
+
+    # 일관 유입 섹터: combined_5d 내림차순
+    consistent_inflow.sort(key=lambda x: -x["combined_5d"])
+    consistent_outflow.sort(key=lambda x: x["combined_5d"])
+    short_reversal.sort(key=lambda x: -x["combined_5d"])
+    short_exit.sort(key=lambda x: x["combined_5d"])
+
+    sector_classification = {
+        "consistent_inflow":  consistent_inflow,
+        "consistent_outflow": consistent_outflow,
+        "short_reversal":     short_reversal,
+        "short_exit":         short_exit,
+    }
+
+    # ── 3. 종목 쏠림 분석 ──────────────────────────────────────────────────
+    # 시총 데이터 로드 (prices.close × financials.shares_total / 1e8 → 억원 단위)
+    analysis_date = sf.get("date", "")
+    mktcap_map: Dict[str, float] = {}
+    if analysis_date:
+        try:
+            import sqlite3 as _sqlite3
+            with _sqlite3.connect(DB_PATH) as _mc:
+                _rows = _mc.execute(
+                    """
+                    SELECT p.symbol, ROUND(p.close * f.shares_total / 1e8, 1) AS mktcap_억
+                    FROM prices p
+                    JOIN (
+                        SELECT symbol, MAX(biz_year) AS by
+                        FROM financials
+                        WHERE shares_total > 0
+                        GROUP BY symbol
+                    ) latest ON p.symbol = latest.symbol
+                    JOIN financials f ON f.symbol = p.symbol AND f.biz_year = latest.by
+                    WHERE p.date = ?
+                    """,
+                    (analysis_date,),
+                ).fetchall()
+            mktcap_map = {r[0]: float(r[1]) for r in _rows if r[1] and r[1] > 0}
+        except Exception:
+            pass
+
+    def _combined_5d(st: Dict) -> float:
+        return (st.get("foreign_5d") or 0) + (st.get("inst_5d") or 0)
+
+    def _combined_60d(st: Dict) -> float:
+        return (st.get("foreign_60d") or 0) + (st.get("inst_60d") or 0)
+
+    concentration_list = []
+    for s in sectors:
+        stocks_in_sector: list = s.get("stocks", [])
+        if not stocks_in_sector:
+            continue
+
+        sector_total_5d = sum(_combined_5d(st) for st in stocks_in_sector)
+        if abs(sector_total_5d) < 0.01:
+            continue
+
+        # 섹터 합이 양수일 때만 집중도 의미 있음 (유입 섹터 내 쏠림)
+        if sector_total_5d <= 0:
+            continue
+
+        sorted_stocks = sorted(stocks_in_sector, key=lambda st: -_combined_5d(st))
+        top1 = sorted_stocks[0] if sorted_stocks else None
+        if top1 is None:
+            continue
+
+        top1_val = _combined_5d(top1)
+        if top1_val <= 0:
+            continue
+
+        top1_sym = top1.get("symbol", "")
+
+        # 시총 500억 미만 제외 (소형주 노이즈 방지)
+        mktcap = mktcap_map.get(top1_sym)
+        if mktcap is None or mktcap < 500:
+            continue
+
+        mktcap_ratio_pct = round(top1_val / mktcap * 100, 2)
+
+        # 급증 비율: 5d 일평균 ÷ 60d 일평균
+        top1_60d = _combined_60d(top1)
+        surge_ratio: Optional[float] = None
+        surge_label: Optional[str] = None
+        if abs(top1_60d) <= 1.0:
+            surge_label = "신규 유입" if top1_val > 0 else "신규 유출"
+        else:
+            daily_5d  = top1_val  / 5
+            daily_60d = top1_60d  / 60
+            if abs(daily_60d) > 0.001:
+                ratio = daily_5d / daily_60d
+                surge_ratio = round(ratio, 1)
+                if ratio > 3:
+                    surge_label = "급증"
+
+        concentration_pct = round(top1_val / sector_total_5d * 100, 1)
+        entry = {
+            "sector_code":       s["code"],
+            "sector_name":       s["name"],
+            "sector_total_5d":   round(sector_total_5d, 1),
+            "top1_symbol":       top1_sym,
+            "top1_name":         top1.get("name", ""),
+            "top1_value_5d":     round(top1_val, 1),
+            "concentration_pct": concentration_pct,
+            "is_concentrated":   concentration_pct > 50,
+            "mktcap_ratio_pct":  mktcap_ratio_pct,
+            "market_cap_억":      mktcap,
+            "surge_ratio":       surge_ratio,
+            "surge_label":       surge_label,
+        }
+        concentration_list.append(entry)
+
+    # 시총 대비 비율 높은 순 정렬
+    concentration_list.sort(key=lambda x: -x["mktcap_ratio_pct"])
+    concentrated_sectors = [e for e in concentration_list if e["is_concentrated"]]
+
+    # ── 4. 교차 분석 연결 ──────────────────────────────────────────────────
+    # 교차 분석 종목 전체 집합 (sector_flow 캐시의 cross_stocks 재활용)
+    inflow_sector_codes = {s["code"] for s in consistent_inflow}
+    all_cross_symbols: set = set()
+    sector_cross_map: Dict[str, list] = {}
+    for s in sectors:
+        cross_syms = [c["symbol"] for c in s.get("cross_stocks", [])]
+        sector_cross_map[s["code"]] = cross_syms
+        all_cross_symbols.update(cross_syms)
+
+    total_cross = len(all_cross_symbols)
+    cross_in_inflow_sectors = sum(
+        1 for sym in all_cross_symbols
+        if any(sym in sector_cross_map.get(code, []) for code in inflow_sector_codes)
+    )
+
+    # 교차 분석 종목 중 섹터 내 top1(5d 기준)인 종목 수
+    sector_top1_symbols = {e["top1_symbol"] for e in concentration_list}
+    cross_as_top1 = len(all_cross_symbols & sector_top1_symbols)
+
+    cross_summary = {
+        "total_cross_stocks":         total_cross,
+        "cross_in_inflow_sectors":    cross_in_inflow_sectors,
+        "cross_as_sector_top1":       cross_as_top1,
+        "inflow_sector_count":        len(inflow_sector_codes),
+    }
+
+    return {
+        "date":                   sf.get("date"),
+        "data_source": {
+            "label":                "외국인 + 기관계 순매수",
+            "detail":               "기관계(inst)는 연기금 포함 기관 전체 합산 (KRX 분류 기준). pension_Nd 컬럼은 기관계 내 연기금 세부 내역.",
+            "pension_latest_date":  sf.get("pension_latest_date"),
+        },
+        "market_summary":         market_summary,
+        "sector_rankings":        sector_rankings,
+        "sector_classification":  sector_classification,
+        "concentration":          {
+            "all":         concentration_list[:20],
+            "concentrated": concentrated_sectors,
+        },
+        "cross_analysis":         cross_summary,
+    }
+
+
+@app.get("/api/watchlist", summary="관심 종목 목록 조회")
+async def watchlist_list() -> List[Dict[str, Any]]:
+    with _db_get_connection() as conn:
+        rows = conn.execute(
+            "SELECT symbol, name, added_at, memo FROM watchlist ORDER BY added_at DESC"
+        ).fetchall()
+    return [{"symbol": r[0], "name": r[1], "added_at": r[2], "memo": r[3]} for r in rows]
+
+
+@app.post("/api/watchlist", summary="관심 종목 추가")
+async def watchlist_add(body: Dict[str, Any]) -> Dict[str, Any]:
+    symbol = str(body.get("symbol", "")).strip()
+    name = str(body.get("name", "")).strip() or None
+    memo = str(body.get("memo", "")).strip() or None
+    if not symbol:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="symbol is required")
+    with _db_get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO watchlist (symbol, name, memo) VALUES (?,?,?)",
+            (symbol, name, memo),
+        )
+        conn.commit()
+    return {"symbol": symbol, "name": name, "memo": memo}
+
+
+@app.delete("/api/watchlist/{symbol}", summary="관심 종목 제거")
+async def watchlist_remove(symbol: str) -> Dict[str, Any]:
+    with _db_get_connection() as conn:
+        conn.execute("DELETE FROM watchlist WHERE symbol=?", (symbol,))
+        conn.commit()
+    return {"symbol": symbol, "removed": True}
+
+
+@app.get("/api/signals", summary="시그널 로그 조회")
+async def signals_list(
+    days: int = Query(default=7, ge=1, le=90),
+) -> List[Dict[str, Any]]:
+    import json as _json
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    with _db_get_connection() as conn:
+        rows = conn.execute(
+            """SELECT id, event_type, ticker, sector, message, data, created_at
+               FROM signal_log
+               WHERE created_at >= ?
+               ORDER BY created_at DESC
+               LIMIT 200""",
+            (cutoff,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        d = None
+        if row[5]:
+            try:
+                d = _json.loads(row[5])
+            except Exception:
+                d = None
+        result.append({
+            "id": row[0],
+            "event_type": row[1],
+            "ticker": row[2],
+            "sector": row[3],
+            "message": row[4],
+            "data": d,
+            "created_at": row[6],
+        })
+    return result
+
+
+@app.get("/api/portfolio/correlation", summary="보유 포지션 간 상관관계 매트릭스")
+async def portfolio_correlation() -> Dict[str, Any]:
+    """현재 open 60d paper_trades 종목들의 최근 60거래일 수익률 피어슨 상관계수 반환."""
+    with _db_get_connection() as conn:
+        rows = conn.execute(
+            "SELECT pt.symbol, s.name FROM paper_trades pt "
+            "LEFT JOIN stocks s ON pt.symbol = s.symbol "
+            "WHERE pt.horizon = 60 AND pt.status = 'open'"
+        ).fetchall()
+
+    if len(rows) < 2:
+        return {"symbols": [], "names": {}, "matrix": [], "avg_correlation": None, "message": "보유 포지션 없음"}
+
+    symbols = [r[0] for r in rows]
+    names = {r[0]: r[1] or r[0] for r in rows}
+
+    # 최근 60거래일 일별 종가 수집
+    price_series: Dict[str, list] = {}
+    with _db_get_connection() as conn:
+        trading_days = sorted(set(
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT date FROM market_index ORDER BY date DESC LIMIT 120"
+            ).fetchall()
+        ))[-60:]  # 가장 최근 60거래일
+
+        if len(trading_days) < 10:
+            return {"symbols": symbols, "names": names, "matrix": [], "avg_correlation": None, "message": "거래일 데이터 부족"}
+
+        first_day = trading_days[0]
+        last_day = trading_days[-1]
+
+        for sym in symbols:
+            price_rows = conn.execute(
+                "SELECT date, close FROM prices WHERE symbol=? AND date BETWEEN ? AND ? ORDER BY date",
+                (sym, first_day, last_day)
+            ).fetchall()
+            price_series[sym] = price_rows
+
+    # 종목별 일별 수익률 계산
+    def _daily_returns(price_rows):
+        if len(price_rows) < 2:
+            return []
+        returns = []
+        for i in range(1, len(price_rows)):
+            prev = price_rows[i-1][1]
+            curr = price_rows[i][1]
+            if prev and prev > 0:
+                returns.append((curr - prev) / prev)
+            else:
+                returns.append(0.0)
+        return returns
+
+    ret_map: Dict[str, list] = {sym: _daily_returns(price_series[sym]) for sym in symbols}
+
+    # 피어슨 상관계수 계산 (공통 날짜 기준)
+    def _pearson(a: list, b: list) -> float:
+        n = min(len(a), len(b))
+        if n < 5:
+            return float("nan")
+        a, b = a[:n], b[:n]
+        mean_a = sum(a) / n
+        mean_b = sum(b) / n
+        num = sum((a[i] - mean_a) * (b[i] - mean_b) for i in range(n))
+        den_a = sum((x - mean_a) ** 2 for x in a) ** 0.5
+        den_b = sum((x - mean_b) ** 2 for x in b) ** 0.5
+        if den_a < 1e-12 or den_b < 1e-12:
+            return float("nan")
+        return round(num / (den_a * den_b), 3)
+
+    n = len(symbols)
+    matrix = []
+    off_diagonal = []
+    for i in range(n):
+        row_vals = []
+        for j in range(n):
+            if i == j:
+                row_vals.append(1.0)
+            else:
+                r = _pearson(ret_map[symbols[i]], ret_map[symbols[j]])
+                row_vals.append(r)
+                if j > i and not (r != r):  # nan 제외
+                    off_diagonal.append(r)
+        matrix.append(row_vals)
+
+    avg_corr = round(sum(off_diagonal) / len(off_diagonal), 3) if off_diagonal else None
+
+    return {
+        "symbols": symbols,
+        "names": names,
+        "matrix": matrix,
+        "avg_correlation": avg_corr,
+        "trading_days_used": len(trading_days),
+    }
+
+
+@app.get("/api/calendar", summary="월간 캘린더 이벤트 조회")
+async def calendar_events(
+    year: int = Query(default=2026, ge=2020, le=2030),
+    month: int = Query(default=8, ge=1, le=12),
+) -> List[Dict[str, Any]]:
+    import json as _json
+    import calendar as _cal
+
+    # 월 범위 계산
+    first_day = f"{year:04d}{month:02d}01"
+    last_day_num = _cal.monthrange(year, month)[1]
+    last_day = f"{year:04d}{month:02d}{last_day_num:02d}"
+
+    events: List[Dict[str, Any]] = []
+
+    with _db_get_connection() as conn:
+        # 1. 포지션 진입일 (파랑) — horizon=60, open
+        rows = conn.execute(
+            """SELECT pt.symbol, pt.recommended_date, s.name
+               FROM paper_trades pt
+               LEFT JOIN stocks s ON pt.symbol = s.symbol
+               WHERE pt.horizon = 60
+                 AND pt.recommended_date BETWEEN ? AND ?""",
+            (first_day, last_day),
+        ).fetchall()
+        for sym, rdate, name in rows:
+            label = f"{name or sym}({sym})" if name else sym
+            events.append({
+                "date": rdate,
+                "type": "position_entry",
+                "color": "blue",
+                "label": f"진입: {label}",
+                "ticker": sym,
+            })
+
+        # 2. 포지션 만기일 (주황) — 진입일로부터 60거래일 후
+        open_rows = conn.execute(
+            """SELECT pt.symbol, pt.recommended_date, s.name
+               FROM paper_trades pt
+               LEFT JOIN stocks s ON pt.symbol = s.symbol
+               WHERE pt.horizon = 60 AND pt.status = 'open'""",
+        ).fetchall()
+        # 거래일 목록 로드 (중복 제거 — market_index에 날짜당 KOSPI/KOSDAQ 2행)
+        td_sorted = sorted(set(
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT date FROM market_index ORDER BY date"
+            ).fetchall()
+        ))
+        td_index = {d: i for i, d in enumerate(td_sorted)}
+        last_td = td_sorted[-1] if td_sorted else "20260101"
+
+        from datetime import date as _date, timedelta as _td
+        def _estimate_expiry(rdate: str, offset: int = 60) -> str:
+            """거래일 목록 내에 있으면 정확한 날짜, 범위 초과면 주말 제외 추정."""
+            if rdate in td_index:
+                idx_r = td_index[rdate] + offset
+                if idx_r < len(td_sorted):
+                    return td_sorted[idx_r]
+                # 남은 거래일을 주말 건너뛰며 추정
+                remaining = idx_r - len(td_sorted) + 1
+                cur = _date(int(last_td[:4]), int(last_td[4:6]), int(last_td[6:8]))
+                counted = 0
+                while counted < remaining:
+                    cur += _td(days=1)
+                    if cur.weekday() < 5:  # 월~금
+                        counted += 1
+                return cur.strftime("%Y%m%d")
+            # rdate가 목록에 없으면 달력 기준 근사 (60거래일 ≈ 84일)
+            from datetime import date as _d2
+            rd = _d2(int(rdate[:4]), int(rdate[4:6]), int(rdate[6:8]))
+            return (rd + _td(days=int(offset * 7 / 5))).strftime("%Y%m%d")
+
+        for sym, rdate, name in open_rows:
+            expiry = _estimate_expiry(rdate, 60)
+            expiry_y = int(expiry[:4])
+            expiry_m = int(expiry[4:6])
+            if expiry_y == year and expiry_m == month:
+                label = f"{name or sym}({sym})" if name else sym
+                events.append({
+                    "date": expiry,
+                    "type": "position_expiry",
+                    "color": "orange",
+                    "label": f"만기: {label}",
+                    "ticker": sym,
+                })
+
+        # 3. 배당기준일 (초록)
+        div_rows = conn.execute(
+            """SELECT d.symbol, d.record_date, d.ex_dividend_date, d.dps, s.name
+               FROM dividends d
+               LEFT JOIN stocks s ON d.symbol = s.symbol
+               WHERE d.record_date BETWEEN ? AND ?
+                  OR d.ex_dividend_date BETWEEN ? AND ?""",
+            (first_day, last_day, first_day, last_day),
+        ).fetchall()
+        for sym, rdate, ex_date, dps, name in div_rows:
+            label = f"{name or sym}({sym})" if name else sym
+            if rdate and first_day <= rdate <= last_day:
+                events.append({
+                    "date": rdate,
+                    "type": "dividend_record",
+                    "color": "green",
+                    "label": f"배당기준일: {label}" + (f" ({dps:,}원)" if dps else ""),
+                    "ticker": sym,
+                })
+            if ex_date and first_day <= ex_date <= last_day:
+                events.append({
+                    "date": ex_date,
+                    "type": "dividend_exdate",
+                    "color": "green",
+                    "label": f"배당락일: {label}" + (f" ({dps:,}원)" if dps else ""),
+                    "ticker": sym,
+                })
+
+        # 4. 시그널 이벤트 (빨강)
+        sig_rows = conn.execute(
+            """SELECT event_type, ticker, message, created_at
+               FROM signal_log
+               WHERE substr(replace(created_at, '-', ''), 1, 8) BETWEEN ? AND ?
+               ORDER BY created_at""",
+            (first_day, last_day),
+        ).fetchall()
+        for etype, ticker, message, created_at in sig_rows:
+            date_part = created_at[:10].replace("-", "")
+            events.append({
+                "date": date_part,
+                "type": "signal_event",
+                "color": "red",
+                "label": message,
+                "ticker": ticker,
+            })
+
+    # 5. 시스템 일정 (보라) — 하드코딩
+    system_schedules = [
+        {"date": "20261001", "label": "정기 재학습 예정 (5d+60d)"},
+        {"date": "20261201", "label": "정기 재학습 예정 (5d+60d)"},
+    ]
+    for s in system_schedules:
+        sdate = s["date"]
+        sy, sm = int(sdate[:4]), int(sdate[4:6])
+        if sy == year and sm == month:
+            events.append({
+                "date": sdate,
+                "type": "system_schedule",
+                "color": "purple",
+                "label": s["label"],
+                "ticker": None,
+            })
+
+    # 날짜순 정렬
+    events.sort(key=lambda x: x["date"])
+    return events
 
 
 @app.get("/api/stocks/search", summary="종목 코드/이름 자동완성 검색")
@@ -2474,6 +4003,75 @@ async def stocks_search(
             (f"%{q_upper}%", f"%{q_str}%", q_upper, f"{q_upper}%", f"{q_str}%", limit),
         ).fetchall()
     return [{"symbol": r["symbol"], "name": r["name"], "market": r["market"]} for r in rows]
+
+
+@app.get("/api/stock/{symbol}/chart", summary="종목 주가 + 투자자별 순매수 차트 데이터")
+async def stock_chart_data(
+    symbol: str,
+    period: str = Query(default="60d", description="조회 기간: 60d | 120d | 1y | 2y | 3y | all"),
+) -> List[Dict[str, Any]]:
+    period_map = {"60d": 60, "120d": 120, "1y": 252, "2y": 504, "3y": 756}
+    if period == "all":
+        limit_clause = ""
+        query_params: tuple = (symbol, symbol, symbol, symbol)
+    else:
+        days = period_map.get(period, 60)
+        limit_clause = "LIMIT ?"
+        query_params = (symbol, days, symbol, symbol, symbol)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        # detail(백필 이력) 우선, kis(최근 30일 롤링)로 보완 — 겹치는 날짜는 detail 우선
+        rows = conn.execute(
+            f"""
+            SELECT p.date, p.open, p.high, p.low, p.close, p.volume,
+                   ROUND(k.foreign_net / 100.0, 2) AS foreign_net,
+                   ROUND(k.inst_net    / 100.0, 2) AS inst_net,
+                   ROUND(k.indiv_net   / 100.0, 2) AS indiv_net
+            FROM (
+                SELECT date, open, high, low, close, volume FROM prices
+                WHERE symbol = ?
+                ORDER BY date DESC
+                {limit_clause}
+            ) p
+            LEFT JOIN (
+                SELECT symbol, date,
+                       foreign_value     AS foreign_net,
+                       inst_total_value  AS inst_net,
+                       indiv_value       AS indiv_net
+                FROM investor_trading_kis_detail
+                WHERE symbol = ?
+                UNION ALL
+                SELECT symbol, date,
+                       foreign_net_value AS foreign_net,
+                       inst_net_value    AS inst_net,
+                       indiv_net_value   AS indiv_net
+                FROM investor_trading_kis k2
+                WHERE symbol = ?
+                  AND NOT EXISTS (
+                        SELECT 1 FROM investor_trading_kis_detail d
+                        WHERE d.symbol = ? AND d.date = k2.date
+                  )
+            ) k ON k.date = p.date
+            ORDER BY p.date ASC
+            """,
+            query_params,
+        ).fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"종목 {symbol} 데이터 없음")
+    return [
+        {
+            "date": r["date"],
+            "open": r["open"],
+            "high": r["high"],
+            "low": r["low"],
+            "close": r["close"],
+            "volume": r["volume"],
+            "foreign_net": r["foreign_net"],
+            "inst_net": r["inst_net"],
+            "indiv_net": r["indiv_net"],
+        }
+        for r in rows
+    ]
 
 
 _NAVER_STOCK_BASE  = "https://m.stock.naver.com"

@@ -45,7 +45,7 @@ export default function ModeSelectPage() {
           <p className="text-gray-400 text-sm">플레이할 모드를 선택하세요</p>
         </div>
 
-        <div className="grid grid-cols-1 gap-4">
+        <div className="space-y-4">
           {/* 역사 시뮬레이션 카드 */}
           <Link
             to="/history"
@@ -85,92 +85,69 @@ export default function ModeSelectPage() {
               </div>
             )}
           </Link>
-        </div>
 
-        {/* AI 추천 카드 */}
-        <Link
-          to="/recommend"
-          className="group block bg-gray-900 border border-gray-800 hover:border-emerald-500/50 rounded-2xl p-6 transition-all hover:shadow-lg hover:shadow-emerald-500/10"
-        >
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-xl">
-              🤖
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <h2 className="text-white font-bold text-lg">AI 추천 종목</h2>
-                <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                  aiOnline === null
-                    ? 'bg-gray-700 text-gray-400'
-                    : aiOnline
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : 'bg-gray-700/60 text-gray-500'
-                }`}>
-                  {aiOnline === null ? '확인 중' : aiOnline ? '서버 ON' : '서버 OFF'}
-                </span>
+          {/* 종목 분석 카드 (AI 추천 + 스크리너 통합) */}
+          <Link
+            to="/recommend"
+            className="group block bg-gray-900 border border-gray-800 hover:border-emerald-500/50 rounded-2xl p-6 transition-all hover:shadow-lg hover:shadow-emerald-500/10"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-xl">
+                📈
               </div>
-              <p className="text-gray-400 text-xs">CatBoost+XGBoost · SHAP 분석</p>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-white font-bold text-lg">종목 분석</h2>
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                    aiOnline === null
+                      ? 'bg-gray-700 text-gray-400'
+                      : aiOnline
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'bg-gray-700/60 text-gray-500'
+                  }`}>
+                    {aiOnline === null ? '확인 중' : aiOnline ? '서버 ON' : '서버 OFF'}
+                  </span>
+                </div>
+                <p className="text-gray-400 text-xs">대시보드 · AI 추천 · 스크리너</p>
+              </div>
             </div>
-          </div>
-          <p className="text-gray-400 text-sm mb-5 leading-relaxed">
-            머신러닝 모델이 내일 +3% 이상 상승 가능성이 높은 종목을 예측합니다.
-            SHAP 기여도 분석으로 예측 근거를 확인하고, 백테스트 성과를 검증하세요.
-          </p>
-          <div className={`rounded-xl px-4 py-3 ${aiOnline ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-gray-800/60'}`}>
-            {aiOnline
-              ? <p className="text-emerald-400 text-xs">서버 연결됨 — 지금 바로 예측 결과를 확인하세요 →</p>
-              : <p className="text-gray-500 text-xs">
-                  서버 오프라인 · <code className="text-gray-400">uvicorn main:app --port 8000</code> 실행 후 접속
-                </p>
-            }
-          </div>
-        </Link>
+            <p className="text-gray-400 text-sm mb-5 leading-relaxed">
+              대시보드에서 시장 현황·포지션·섹터 흐름을 확인하고,
+              스크리너에서 검증된 조합으로 종목을 검색하세요.
+            </p>
+            <div className={`rounded-xl px-4 py-3 ${aiOnline ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-gray-800/60'}`}>
+              {aiOnline
+                ? <p className="text-emerald-400 text-xs">서버 연결됨 — 대시보드·스크리너 바로 확인 →</p>
+                : <p className="text-gray-500 text-xs">
+                    서버 오프라인 · <code className="text-gray-400">uvicorn main:app --port 8000</code> 실행 후 접속
+                  </p>
+              }
+            </div>
+          </Link>
 
-        {/* 종목 스크리너 카드 */}
-        <Link
-          to="/screener"
-          className="group block bg-gray-900 border border-gray-800 hover:border-sky-500/50 rounded-2xl p-6 transition-all hover:shadow-lg hover:shadow-sky-500/10"
-        >
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-sky-500/20 flex items-center justify-center text-xl">
-              🔍
+          {/* AI 모의투자 추적 카드 */}
+          <Link
+            to="/paper-trading"
+            className="group block bg-gray-900 border border-gray-800 hover:border-purple-500/50 rounded-2xl p-6 transition-all hover:shadow-lg hover:shadow-purple-500/10"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center text-xl">
+                📊
+              </div>
+              <div>
+                <h2 className="text-white font-bold text-lg">AI 모의투자 추적</h2>
+                <p className="text-gray-400 text-xs">Paper Trading · 5거래일 자동 청산</p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-white font-bold text-lg">종목 스크리너</h2>
-              <p className="text-gray-400 text-xs">검증된 조건으로 직접 검색</p>
+            <p className="text-gray-400 text-sm mb-5 leading-relaxed">
+              AI가 추천한 종목의 실제 성과를 5거래일 단위로 추적합니다.
+              승률, 누적 수익률, 베스트/워스트 거래를 한눈에 확인하세요.
+            </p>
+            <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl px-4 py-3">
+              <p className="text-purple-400 text-xs">성과 추적 확인 →</p>
             </div>
-          </div>
-          <p className="text-gray-400 text-sm mb-5 leading-relaxed">
-            워크포워드로 검증된 조건(고배당, RSI 과매도, 볼린저 하단)으로 종목을 검색하고
-            최종 선택은 직접 합니다. 어떤 조건이 검증됐는지/안 됐는지 배지로 명확히 표시됩니다.
-          </p>
-          <div className="bg-sky-500/10 border border-sky-500/20 rounded-xl px-4 py-3">
-            <p className="text-sky-400 text-xs">조건 검색하러 가기 →</p>
-          </div>
-        </Link>
-
-        {/* AI 모의투자 추적 카드 */}
-        <Link
-          to="/paper-trading"
-          className="group block bg-gray-900 border border-gray-800 hover:border-purple-500/50 rounded-2xl p-6 transition-all hover:shadow-lg hover:shadow-purple-500/10"
-        >
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center text-xl">
-              📊
-            </div>
-            <div>
-              <h2 className="text-white font-bold text-lg">AI 모의투자 추적</h2>
-              <p className="text-gray-400 text-xs">Paper Trading · 5거래일 자동 청산</p>
-            </div>
-          </div>
-          <p className="text-gray-400 text-sm mb-5 leading-relaxed">
-            AI가 추천한 종목의 실제 성과를 5거래일 단위로 추적합니다.
-            승률, 누적 수익률, 베스트/워스트 거래를 한눈에 확인하세요.
-          </p>
-          <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl px-4 py-3">
-            <p className="text-purple-400 text-xs">성과 추적 확인 →</p>
-          </div>
-        </Link>
+          </Link>
+        </div>
 
         <div className="flex items-center justify-between">
           <p className="text-gray-400 text-xs">
