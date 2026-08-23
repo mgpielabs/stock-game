@@ -14,6 +14,7 @@ import argparse
 import ctypes
 import json
 import logging
+import msvcrt
 import os
 import re
 import socket
@@ -70,20 +71,20 @@ def _write_pipeline_status(stage: int, stage_name: str, status: str = "running")
     """stage/heartbeat/started_at을 STATUS_FILE에 원자적으로 기록."""
     global _pl_last_write_t
     try:
-        STATUS_FILE.write_text(
-            json.dumps({
-                "started_at":         _pl_started_at,
-                "current_stage":      stage,
-                "current_stage_name": stage_name,
-                "total_stages":       11,
-                "last_heartbeat":     time.time(),
-                "status":             status,
-            }, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        data = json.dumps({
+            "started_at":         _pl_started_at,
+            "current_stage":      stage,
+            "current_stage_name": stage_name,
+            "total_stages":       12,
+            "last_heartbeat":     time.time(),
+            "status":             status,
+        }, ensure_ascii=False)
+        _tmp = STATUS_FILE.with_suffix(".tmp")
+        _tmp.write_text(data, encoding="utf-8")
+        os.replace(str(_tmp), str(STATUS_FILE))
         _pl_last_write_t = time.time()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("파이프라인 상태 기록 실패: %s", e)
 
 
 def _touch_heartbeat() -> None:
@@ -97,20 +98,20 @@ def _write_skip_status(reason: str) -> None:
     """스킵 상태를 STATUS_FILE에 기록 — 프론트에서 '스킵됨' 배너 표시 가능."""
     try:
         now = time.time()
-        STATUS_FILE.write_text(
-            json.dumps({
-                "started_at":         now,
-                "current_stage":      0,
-                "current_stage_name": "",
-                "total_stages":       11,
-                "last_heartbeat":     now,
-                "status":             "skipped",
-                "reason":             reason,
-            }, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
+        data = json.dumps({
+            "started_at":         now,
+            "current_stage":      0,
+            "current_stage_name": "",
+            "total_stages":       12,
+            "last_heartbeat":     now,
+            "status":             "skipped",
+            "reason":             reason,
+        }, ensure_ascii=False)
+        _tmp = STATUS_FILE.with_suffix(".tmp")
+        _tmp.write_text(data, encoding="utf-8")
+        os.replace(str(_tmp), str(STATUS_FILE))
+    except Exception as e:
+        log.warning("파이프라인 스킵 상태 기록 실패: %s", e)
 
 
 def _is_already_current(_now: "datetime | None" = None) -> bool:
@@ -290,16 +291,31 @@ def restart_server(dry_run: bool = False) -> None:
         log.info("[DRY-RUN] 서버 재시작 건너뜀")
         return
 
-    kill_port(SERVER_PORT)
-    log.info("기존 서버 종료 완료 — 새 프로세스로 시작합니다")
-
-    subprocess.Popen(
-        [str(PYTHON), "-m", "uvicorn", "main:app", "--port", str(SERVER_PORT)],
-        cwd=str(SRV_DIR),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | SERVER_FLAGS,
+    # PM2로 재시작 시도 (autorestart 사이클 유지, PM2 대시보드 상태 일관성)
+    log.info("PM2로 서버 재시작: npx pm2 restart stock-backend --update-env")
+    pm2_result = subprocess.run(
+        ["npx", "pm2", "restart", "stock-backend", "--update-env"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        creationflags=SUBPROCESS_FLAGS,
     )
+    if pm2_result.returncode != 0:
+        log.warning(
+            "PM2 재시작 실패(exit=%d) — 직접 재시작으로 대체: %s",
+            pm2_result.returncode,
+            pm2_result.stderr.strip() or pm2_result.stdout.strip(),
+        )
+        kill_port(SERVER_PORT)
+        subprocess.Popen(
+            [str(PYTHON), "-m", "uvicorn", "main:app", "--port", str(SERVER_PORT)],
+            cwd=str(SRV_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | SERVER_FLAGS,
+        )
+    else:
+        log.info("PM2 재시작 완료")
 
     for attempt in range(15):
         time.sleep(3)
@@ -343,20 +359,47 @@ def _is_pid_alive(pid: int) -> bool:
         return False
 
 
+_lock_fd: "int | None" = None
+
+
 def acquire_lock() -> bool:
-    """이미 실행 중인 다른 daily_pipeline.py(.bat이든 API든)가 있으면 False."""
-    if LOCK_FILE.exists():
+    """msvcrt.locking()으로 원자적 중복 실행 방지 (Windows 전용).
+
+    LOCK_FILE의 첫 바이트를 LK_NBLCK로 잠금. 잠금 성공 시 fd를 _lock_fd에 보관해
+    프로세스 생존 중 계속 락을 유지. 프로세스 종료 시 OS가 자동 해제.
+    """
+    global _lock_fd
+    try:
+        fd = os.open(str(LOCK_FILE), os.O_CREAT | os.O_RDWR)
         try:
-            pid = int(LOCK_FILE.read_text().strip())
-            if _is_pid_alive(pid):
-                return False
-        except Exception:
-            pass
-    LOCK_FILE.write_text(str(os.getpid()))
-    return True
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            os.close(fd)
+            return False
+        # 잠금 성공 — 내 PID 기록
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        _lock_fd = fd
+        return True
+    except Exception as e:
+        log.warning("잠금 파일 생성 실패: %s", e)
+        return False
 
 
 def release_lock() -> None:
+    global _lock_fd
+    if _lock_fd is not None:
+        try:
+            os.lseek(_lock_fd, 0, os.SEEK_SET)
+            msvcrt.locking(_lock_fd, msvcrt.LK_UNLCK, 1)
+        except Exception:
+            pass
+        try:
+            os.close(_lock_fd)
+        except Exception:
+            pass
+        _lock_fd = None
     LOCK_FILE.unlink(missing_ok=True)
 
 
