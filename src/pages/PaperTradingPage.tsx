@@ -11,6 +11,8 @@ import {
   type TimelineEntry,
   type TimelineGroupStat,
   type TradeRecord,
+  type ShadowVsLiveResponse,
+  type ShadowSlot,
 } from '../api/aiRecommend'
 import StatusBanner from '../components/StatusBanner'
 import { fmtDate } from '../utils/format'
@@ -108,6 +110,70 @@ function LivePerfCard({ livePerf }: { livePerf: LivePerformanceResponse | null }
         {render5d()}
         {render60d()}
       </div>
+    </div>
+  )
+}
+
+// ── Shadow vs Live 비교 ───────────────────────────────────────
+
+function ShadowRow({ slot, label }: { slot: ShadowSlot; label: string }) {
+  if (slot.status === 'collecting') {
+    return (
+      <tr className="border-b border-gray-800">
+        <td className="px-3 py-2 text-gray-400 text-xs">{label}</td>
+        <td className="px-3 py-2 text-gray-600 text-xs text-center" colSpan={3}>
+          수집 중 ({slot.n}건)
+        </td>
+      </tr>
+    )
+  }
+  const ret = slot.avg_return_pct
+  const hit = slot.hit_rate_pct
+  return (
+    <tr className="border-b border-gray-800">
+      <td className="px-3 py-2 text-gray-300 text-xs">{label}</td>
+      <td className={`px-3 py-2 text-xs text-right tabular-nums font-medium ${ret != null ? (ret >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-gray-500'}`}>
+        {ret != null ? (ret >= 0 ? '+' : '') + ret.toFixed(2) + '%' : '—'}
+      </td>
+      <td className={`px-3 py-2 text-xs text-right tabular-nums ${hit != null ? (hit >= 50 ? 'text-emerald-400' : 'text-gray-300') : 'text-gray-500'}`}>
+        {hit != null ? hit.toFixed(1) + '%' : '—'}
+      </td>
+      <td className="px-3 py-2 text-gray-600 text-xs text-right">{slot.n}건</td>
+    </tr>
+  )
+}
+
+function ShadowVsLiveCard({ data }: { data: ShadowVsLiveResponse | null }) {
+  if (!data) return null
+  const allCollecting = [data.live, data.shadow_blocked, data.live_60d, data.shadow_blocked_60d]
+    .every(s => s.status === 'collecting')
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-gray-300 text-xs font-semibold">🔬 Shadow vs Live (G2 게이트 검증)</span>
+        {allCollecting && (
+          <span className="text-gray-600 text-xs">데이터 수집 중 — n≥10 이상 쌓이면 표시</span>
+        )}
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-700 text-gray-500 text-xs">
+            <th className="px-3 py-2 text-left font-normal">슬리브</th>
+            <th className="px-3 py-2 text-right font-normal">평균수익</th>
+            <th className="px-3 py-2 text-right font-normal">적중률</th>
+            <th className="px-3 py-2 text-right font-normal">n</th>
+          </tr>
+        </thead>
+        <tbody>
+          <ShadowRow slot={data.live} label="5d 실제 (게이트ON)" />
+          <ShadowRow slot={data.shadow_blocked} label="5d 가상 (게이트OFF)" />
+          <ShadowRow slot={data.live_60d} label="60d 실제 (게이트OFF)" />
+          <ShadowRow slot={data.shadow_blocked_60d} label="60d 가상 (게이트ON)" />
+        </tbody>
+      </table>
+      <p className="text-gray-700 text-xs mt-2">
+        shadow &gt; live이면 G2 게이트 철회 검토. 5d는 v1.2 이후 shadow 기록만 유지.
+      </p>
     </div>
   )
 }
@@ -498,6 +564,69 @@ function ModelSwitchHistory({ entries }: { entries: TimelineEntry[] }) {
   )
 }
 
+// ── 진입 로직 가이드 ──────────────────────────────────────────────
+
+function EntryGuide() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+        title="모의투자 진입 로직 설명"
+      >
+        <span className="w-4 h-4 rounded-full border border-gray-600 flex items-center justify-center text-[10px] font-bold shrink-0">?</span>
+        <span>모의투자 진입 방식 {open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 bg-gray-900 border border-gray-700/60 rounded-xl p-4 text-xs text-gray-400 space-y-3 leading-relaxed">
+          <div>
+            <p className="text-gray-200 font-semibold mb-1">📌 어떻게 작동하나요?</p>
+            <p>매일 16:30 자동 파이프라인이 실행되면, AI 모델이 <span className="text-teal-400 font-medium">60일 모델 상위 10종목</span>을 선정합니다. 이 중 조건을 통과한 종목이 <code className="bg-gray-800 px-1 rounded">paper_trades</code>에 기록됩니다.</p>
+          </div>
+
+          <div>
+            <p className="text-gray-300 font-medium mb-1">🔵 60d 슬리브 진입 조건</p>
+            <ul className="space-y-1 ml-2">
+              <li>• <span className="text-white">60거래일 주기</span>: 마지막 진입일로부터 60거래일 이상 경과해야 새 배치 진입 (백테스트 리밸런싱 주기 동일)</li>
+              <li>• <span className="text-white">유동성 필터</span>: 당일 거래대금 10억 미만 종목 제외</li>
+              <li>• <span className="text-white">상한가 필터</span>: 당일 +29% 이상 상승 종목 제외 (익일 시가 확보 불확실)</li>
+              <li>• <span className="text-white">중복 방지</span>: 같은 종목이 같은 날 이미 기록돼 있으면 무시</li>
+              <li>• <span className="text-gray-500">concentration_filter(쿨다운) 미적용</span>: API 추천에만 적용, 모의투자 진입에는 미적용</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="text-gray-300 font-medium mb-1">⚫ 5d 슬리브 (v1.2 이후)</p>
+            <p>v1.2(2026-08-09) 전환 후 5d 슬리브는 <span className="text-amber-400">운용 중단</span>. 신규 5d 진입 없이 shadow 기록(비교 데이터)만 유지됩니다.</p>
+          </div>
+
+          <div>
+            <p className="text-gray-300 font-medium mb-1">📊 prediction_log vs paper_trades 차이</p>
+            <div className="bg-gray-800/60 rounded-lg p-2.5 space-y-1">
+              <div className="flex gap-2">
+                <span className="text-emerald-400 shrink-0 font-medium">prediction_log</span>
+                <span>— 매일 AI가 선정한 상위 10종목(쿨다운 필터 적용) 기록. 성과지표(P@10) 계산용.</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-teal-400 shrink-0 font-medium">paper_trades</span>
+                <span>— 실제 "가상 매수" 기록. 60거래일 주기 조건 충족 시에만 진입. 여기서 수익률 집계.</span>
+              </div>
+              <p className="text-gray-500 text-[11px] mt-1">→ prediction_log는 매일 기록되지만 paper_trades는 60거래일마다만 기록됩니다.</p>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-gray-300 font-medium mb-1">💰 비용 구조</p>
+            <p>진입가: 추천 익일 시가 (당일 종가가 아님). 비용: 왕복 <span className="text-white">0.63%</span> (매수 0.215% + 매도 0.415%).</p>
+            <p className="text-gray-500 text-[11px] mt-0.5">수익률 = (1+r)×(1−0.00215)×(1−0.00415)−1</p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── 보유 종목 행 ───────────────────────────────────────────────
 
 function SleeveBadge({ horizon }: { horizon?: number }) {
@@ -605,6 +734,7 @@ export default function PaperTradingPage() {
   const [timeline, setTimeline] = useState<PerformanceTimeline | null>(null)
   const [byModel, setByModel] = useState<PerformanceByModel | null>(null)
   const [livePerf, setLivePerf] = useState<LivePerformanceResponse | null>(null)
+  const [shadowVsLive, setShadowVsLive] = useState<ShadowVsLiveResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -642,6 +772,7 @@ export default function PaperTradingPage() {
     aiApi.health().then(h => { if (!cancelled) setHealth(h) }).catch(() => {})
     aiApi.predictions(1).then(r => { if (!cancelled) setRegimeGate(r.regime_gate ?? null) }).catch(() => {})
     aiApi.livePerformance().then(lp => { if (!cancelled) setLivePerf(lp) }).catch(() => {})
+    paperTradingApi.shadowVsLive().then(sv => { if (!cancelled) setShadowVsLive(sv) }).catch(() => {})
 
     return () => { cancelled = true }
   }, [])
@@ -723,8 +854,12 @@ export default function PaperTradingPage() {
             {/* 0.5 라이브 성과 */}
             <LivePerfCard livePerf={livePerf} />
 
+            {/* 0.6 Shadow vs Live (G2 게이트 검증) */}
+            <ShadowVsLiveCard data={shadowVsLive} />
+
             {/* 1. 현재 보유 종목 */}
             <section>
+              <EntryGuide />
               <h2 className="text-white font-semibold text-sm mb-3">
                 현재 보유 종목
                 <span className="ml-2 text-gray-500 font-normal text-xs">{active.length}개</span>

@@ -492,6 +492,25 @@ export const paperTradingApi = {
     ),
   getPerformanceByModel: () =>
     apiFetch<PerformanceByModel>('/api/paper/performance-by-model'),
+  shadowVsLive: () =>
+    apiFetch<ShadowVsLiveResponse>('/api/paper/shadow-vs-live'),
+}
+
+// ── Shadow vs Live ────────────────────────────────────────────
+
+export interface ShadowSlot {
+  status: 'collecting' | 'ready'
+  n: number
+  avg_return_pct?: number
+  hit_rate_pct?: number
+  label: string
+}
+
+export interface ShadowVsLiveResponse {
+  live: ShadowSlot
+  shadow_blocked: ShadowSlot
+  live_60d: ShadowSlot
+  shadow_blocked_60d: ShadowSlot
 }
 
 // ── 스크리너 ──────────────────────────────────────────────────
@@ -720,10 +739,10 @@ export interface SectorFlowAnalysisClassEntry {
 export interface SectorFlowAnalysisConcentrationEntry {
   sector_code: string
   sector_name: string
-  sector_total_5d: number
+  sector_total: number
   top1_symbol: string
   top1_name: string
-  top1_value_5d: number
+  top1_value: number
   concentration_pct: number
   is_concentrated: boolean
   mktcap_ratio_pct: number
@@ -793,8 +812,8 @@ export const screenerApi = {
     apiFetch<CrossAnalysisResponse>('/api/screener/cross-analysis'),
   sectorFlow: () =>
     apiFetch<SectorFlowResponse>('/api/screener/sector-flow'),
-  sectorFlowAnalysis: () =>
-    apiFetch<SectorFlowAnalysisResponse>('/api/screener/sector-flow/analysis'),
+  sectorFlowAnalysis: (period = '5d') =>
+    apiFetch<SectorFlowAnalysisResponse>(`/api/screener/sector-flow/analysis?period=${encodeURIComponent(period)}`),
   stockChart: (symbol: string, period: '60d' | '120d' | '1y' | '2y' | '3y' | 'all' = '1y') =>
     apiFetch<StockChartPoint[]>(`/api/stock/${encodeURIComponent(symbol)}/chart?period=${period}`),
 }
@@ -952,8 +971,18 @@ export const signalsApi = {
 
 export interface CalendarEvent {
   date: string  // YYYYMMDD
-  type: 'position_entry' | 'position_expiry' | 'dividend_record' | 'dividend_exdate' | 'signal_event' | 'system_schedule'
-  color: 'blue' | 'orange' | 'green' | 'red' | 'purple'
+  type:
+    | 'position_entry' | 'position_expiry'
+    | 'dividend_record' | 'dividend_exdate' | 'dividend_payment'
+    | 'signal_event' | 'system_schedule'
+    | 'earnings_season'
+    | 'options_expiry' | 'quadruple_witching'
+    | 'fomc' | 'bok_rate'
+    | 'msci_rebalance'
+    | 'market_holiday'
+  color:
+    | 'blue' | 'orange' | 'green' | 'teal' | 'red' | 'purple'
+    | 'yellow' | 'amber' | 'rose' | 'slate' | 'violet' | 'gray'
   label: string
   ticker: string | null
 }
