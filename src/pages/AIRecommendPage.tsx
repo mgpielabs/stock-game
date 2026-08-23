@@ -549,23 +549,27 @@ const FEATURE_HINTS: Record<string, string> = {
 export function BadgeTooltip({ text, children, placement = 'top', className = '' }: {
   text: string
   children: React.ReactNode
-  placement?: 'top' | 'top-right' | 'bottom'
+  placement?: 'top' | 'top-right' | 'top-end' | 'bottom'
   className?: string
 }) {
   const boxCls = placement === 'top-right'
     ? 'bottom-full left-0 mb-1.5'
+    : placement === 'top-end'
+    ? 'bottom-full right-0 mb-1.5'
     : placement === 'bottom'
     ? 'top-full left-1/2 -translate-x-1/2 mt-1.5'
     : 'bottom-full left-1/2 -translate-x-1/2 mb-1.5'
   const arrowCls = placement === 'top-right'
     ? 'top-full left-4 border-t-gray-700'
+    : placement === 'top-end'
+    ? 'top-full right-4 border-t-gray-700'
     : placement === 'bottom'
     ? 'bottom-full left-1/2 -translate-x-1/2 border-b-gray-700'
     : 'top-full left-1/2 -translate-x-1/2 border-t-gray-700'
   return (
     <span className={`relative group/tip inline-flex ${className}`}>
       {children}
-      <span className={`pointer-events-none absolute z-50 w-56 rounded-lg bg-gray-950 border border-gray-700 px-2.5 py-2
+      <span className={`pointer-events-none absolute z-50 w-56 max-w-[min(14rem,calc(100vw-1rem))] rounded-lg bg-gray-950 border border-gray-700 px-2.5 py-2
                        text-xs text-gray-300 leading-relaxed whitespace-normal
                        opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150 shadow-2xl ${boxCls}`}>
         {text}
@@ -2808,18 +2812,88 @@ const CAL_COLOR_MAP: Record<string, string> = {
   blue:   'bg-blue-500',
   orange: 'bg-orange-500',
   green:  'bg-green-500',
+  teal:   'bg-teal-400',
   red:    'bg-red-500',
   purple: 'bg-purple-500',
+  yellow: 'bg-yellow-400',
+  amber:  'bg-amber-500',
+  rose:   'bg-rose-500',
+  slate:  'bg-slate-400',
+  violet: 'bg-violet-500',
+  gray:   'bg-gray-500',
+}
+
+const CAL_CARD_STYLE: Record<string, string> = {
+  blue:   'text-blue-300 bg-blue-900/30 border-blue-800/50',
+  orange: 'text-orange-300 bg-orange-900/30 border-orange-800/50',
+  green:  'text-green-300 bg-green-900/30 border-green-800/50',
+  teal:   'text-teal-300 bg-teal-900/30 border-teal-800/50',
+  red:    'text-red-300 bg-red-900/30 border-red-800/50',
+  purple: 'text-purple-300 bg-purple-900/30 border-purple-800/50',
+  yellow: 'text-yellow-300 bg-yellow-900/20 border-yellow-800/50',
+  amber:  'text-amber-300 bg-amber-900/30 border-amber-800/50',
+  rose:   'text-rose-300 bg-rose-900/30 border-rose-800/50',
+  slate:  'text-slate-300 bg-slate-800/60 border-slate-600/50',
+  violet: 'text-violet-300 bg-violet-900/30 border-violet-800/50',
+  gray:   'text-gray-400 bg-gray-800/40 border-gray-700/40',
 }
 
 const CAL_TYPE_LABEL: Record<string, string> = {
-  position_entry:   '포지션 진입',
-  position_expiry:  '포지션 만기',
-  dividend_record:  '배당기준일',
-  dividend_exdate:  '배당락일',
-  signal_event:     '시그널',
-  system_schedule:  '시스템 일정',
+  position_entry:    '포지션 진입',
+  position_expiry:   '포지션 만기',
+  dividend_record:   '배당기준일',
+  dividend_exdate:   '배당락일',
+  dividend_payment:  '배당지급(추정)',
+  signal_event:      '시그널',
+  system_schedule:   '시스템 일정',
+  earnings_season:   '실적 시즌',
+  options_expiry:    '옵션만기',
+  quadruple_witching:'쿼드러플위칭',
+  fomc:              'FOMC',
+  bok_rate:          '금통위',
+  msci_rebalance:    'MSCI 리밸런싱',
+  market_holiday:    '휴장일',
 }
+
+const CAL_TYPE_DESC: Record<string, string> = {
+  msci_rebalance:
+    'MSCI 글로벌 지수 편입/편출 종목이 확정되는 날. 추종 펀드들이 매수/매도를 집중 실행해 외국인 수급이 급변하고 변동성이 커집니다. 포지션 보유 중이면 주의.',
+  fomc:
+    '미국 연준 금리 결정일. 금리 인상/인하/동결 발표 후 글로벌 증시 방향이 바뀔 수 있습니다. 한국시간 새벽 발표, 다음날 한국 시장에 반영.',
+  bok_rate:
+    '한국은행 기준금리 결정일. 국내 금리 방향에 따라 금융주·부동산 관련주 수급 변동.',
+  options_expiry:
+    '주식옵션 만기일. 만기 전후 프로그램 매매가 집중되어 장중 변동성 확대 가능.',
+  quadruple_witching:
+    '선물+옵션 동시 만기(쿼드러플 위칭). 프로그램 매매량이 평소의 2~3배로 급증, 장 마감 30분 특히 주의.',
+  earnings_season:
+    '분기 실적 발표가 집중되는 기간. 실적 서프라이즈/쇼크에 따라 개별 종목 급등락 가능.',
+  dividend_exdate:
+    '배당 받을 권리가 사라지는 날. 이 날 매수하면 배당을 못 받고, 주가가 배당금만큼 하락 조정됩니다.',
+  dividend_record:
+    '배당기준일. 이 날까지 보유한 주주에게 배당금이 지급됩니다. 실제 배당 수령을 위해서는 기준일 2영업일 전(배당락일 전날)까지 매수해야 합니다.',
+  dividend_payment:
+    '배당금 지급 추정일. 통상 배당기준일로부터 약 90일 후 지급되며, 회사별로 다를 수 있습니다.',
+  market_holiday:
+    '한국거래소 휴장일. 주식 거래 불가.',
+  position_expiry:
+    '60일 보유 포지션 만기. 매도 청산 예정일입니다.',
+  position_entry:
+    '60일 포지션 진입일.',
+}
+
+// 필터 그룹 정의
+const CAL_FILTER_GROUPS = [
+  { key: 'position',  emoji: '💼', label: '포지션', types: ['position_entry', 'position_expiry'] },
+  { key: 'dividend',  emoji: '💰', label: '배당',   types: ['dividend_record', 'dividend_exdate', 'dividend_payment'] },
+  { key: 'earnings',  emoji: '📊', label: '실적',   types: ['earnings_season'] },
+  { key: 'derivative',emoji: '⚡', label: '파생',   types: ['options_expiry', 'quadruple_witching'] },
+  { key: 'macro',     emoji: '🏦', label: '매크로', types: ['fomc', 'bok_rate', 'msci_rebalance'] },
+  { key: 'holiday',   emoji: '🚫', label: '휴장',   types: ['market_holiday'] },
+  { key: 'other',     emoji: '🔔', label: '기타',   types: ['signal_event', 'system_schedule'] },
+] as const
+
+type FilterGroupKey = typeof CAL_FILTER_GROUPS[number]['key']
 
 // ── 포트폴리오 상관관계 히트맵 ──────────────────────────────────────────────
 function CorrelationSection({ onSelect }: { onSelect?: (symbol: string) => void }) {
@@ -2968,6 +3042,9 @@ function CalendarSection({ onSelect }: { onSelect?: (symbol: string) => void }) 
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [expandedEvent, setExpandedEvent] = useState<string | null>(null) // `${date}-${i}`
+  // 필터: 그룹 단위 on/off (기본 전부 ON)
+  const [hiddenGroups, setHiddenGroups] = useState<Set<FilterGroupKey>>(new Set())
 
   useEffect(() => {
     setLoading(true)
@@ -2984,31 +3061,47 @@ function CalendarSection({ onSelect }: { onSelect?: (symbol: string) => void }) 
     if (curMonth === 12) { setCurYear(y => y + 1); setCurMonth(1) }
     else setCurMonth(m => m + 1)
   }
+  const toggleGroup = (key: FilterGroupKey) => {
+    setHiddenGroups(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  // 숨겨진 타입 계산
+  const hiddenTypes = new Set<string>()
+  for (const g of CAL_FILTER_GROUPS) {
+    if (hiddenGroups.has(g.key)) g.types.forEach(t => hiddenTypes.add(t))
+  }
 
   // 달력 그리드 계산
-  const firstWeekday = new Date(curYear, curMonth - 1, 1).getDay() // 0=일
+  const firstWeekday = new Date(curYear, curMonth - 1, 1).getDay()
   const daysInMonth = new Date(curYear, curMonth, 0).getDate()
   const cells: (number | null)[] = [
     ...Array(firstWeekday).fill(null),
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ]
-  // 6행 맞추기
   while (cells.length % 7 !== 0) cells.push(null)
 
-  // 날짜별 이벤트 맵
+  // 날짜별 이벤트 맵 (필터 적용)
   const eventMap: Record<string, CalendarEvent[]> = {}
   for (const ev of events) {
+    if (hiddenTypes.has(ev.type)) continue
     if (!eventMap[ev.date]) eventMap[ev.date] = []
     eventMap[ev.date].push(ev)
   }
 
   const toDateKey = (d: number) =>
     `${curYear}${String(curMonth).padStart(2, '0')}${String(d).padStart(2, '0')}`
-
   const todayKey = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`
   const dayNames = ['일', '월', '화', '수', '목', '금', '토']
-
   const selectedEvents = selectedDate ? (eventMap[selectedDate] ?? []) : []
+
+  // 휴장일 여부 — market_holiday 이벤트가 있는 날
+  const holidaySet = new Set(
+    events.filter(e => e.type === 'market_holiday').map(e => e.date)
+  )
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
@@ -3028,34 +3121,59 @@ function CalendarSection({ onSelect }: { onSelect?: (symbol: string) => void }) 
         </div>
       </div>
 
+      {/* 필터 토글 칩 */}
+      <div className="flex flex-wrap gap-1">
+        {CAL_FILTER_GROUPS.map(g => {
+          const active = !hiddenGroups.has(g.key)
+          return (
+            <button
+              key={g.key}
+              onClick={() => toggleGroup(g.key)}
+              className={`flex items-center gap-0.5 text-[10px] px-2 py-0.5 rounded-full border transition-colors
+                ${active
+                  ? 'border-gray-600 bg-gray-700 text-gray-200'
+                  : 'border-gray-700 bg-transparent text-gray-600'}`}
+            >
+              <span>{g.emoji}</span>
+              <span>{g.label}</span>
+            </button>
+          )
+        })}
+      </div>
+
       {loading && <div className="text-gray-500 text-xs text-center py-4">로딩 중...</div>}
 
       {!loading && (
         <>
-          {/* 범례 */}
-          <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {/* 색상 범례 */}
+          <div className="flex flex-wrap gap-x-2.5 gap-y-1 pb-1 border-b border-gray-800">
             {[
-              ['blue', '진입'],
+              ['blue',   '진입'],
               ['orange', '만기'],
-              ['green', '배당'],
-              ['red', '시그널'],
-              ['purple', '시스템'],
+              ['green',  '배당'],
+              ['teal',   '배당지급'],
+              ['yellow', '실적시즌'],
+              ['amber',  '옵션만기'],
+              ['rose',   '쿼드위칭'],
+              ['slate',  'FOMC/금통위'],
+              ['violet', 'MSCI'],
+              ['red',    '시그널'],
             ].map(([color, label]) => (
-              <span key={color} className="flex items-center gap-1 text-[10px] text-gray-400">
-                <span className={`w-2 h-2 rounded-full ${CAL_COLOR_MAP[color]}`} />
+              <span key={color} className="flex items-center gap-1 text-[9px] text-gray-500">
+                <span className={`w-1.5 h-1.5 rounded-full ${CAL_COLOR_MAP[color]}`} />
                 {label}
               </span>
             ))}
           </div>
 
-          {/* 요일 헤더 */}
+          {/* 요일 헤더 + 날짜 셀 */}
           <div className="grid grid-cols-7 gap-0.5 text-center">
             {dayNames.map((d, i) => (
-              <div key={d} className={`text-[10px] font-medium pb-1 ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-500'}`}>
+              <div key={d} className={`text-[10px] font-medium pb-1
+                ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-gray-500'}`}>
                 {d}
               </div>
             ))}
-            {/* 날짜 셀 */}
             {cells.map((d, i) => {
               if (d === null) return <div key={`e${i}`} />
               const key = toDateKey(d)
@@ -3063,26 +3181,33 @@ function CalendarSection({ onSelect }: { onSelect?: (symbol: string) => void }) 
               const isToday = key === todayKey
               const isSel = key === selectedDate
               const wday = (firstWeekday + d - 1) % 7
+              const isHoliday = holidaySet.has(key) && !hiddenTypes.has('market_holiday')
               return (
                 <button
                   key={key}
                   onClick={() => setSelectedDate(isSel ? null : key)}
                   className={`relative flex flex-col items-center rounded-lg py-1 transition-colors
-                    ${isSel ? 'bg-gray-700' : 'hover:bg-gray-800'}
+                    ${isSel ? 'bg-gray-700' : isHoliday ? 'bg-gray-800/60 hover:bg-gray-800' : 'hover:bg-gray-800'}
                     ${isToday ? 'ring-1 ring-emerald-500' : ''}`}
                 >
                   <span className={`text-[11px] font-medium leading-tight
-                    ${isToday ? 'text-emerald-400' : wday === 0 ? 'text-red-400' : wday === 6 ? 'text-blue-400' : 'text-gray-300'}`}
+                    ${isToday ? 'text-emerald-400'
+                      : wday === 0 ? 'text-red-400'
+                      : wday === 6 ? 'text-blue-400'
+                      : isHoliday ? 'text-gray-600'
+                      : 'text-gray-300'}`}
                   >
                     {d}
                   </span>
-                  {/* 이벤트 도트 (최대 3개) */}
+                  {/* 이벤트 도트 (최대 4개) */}
                   {dayEvents.length > 0 && (
                     <div className="flex gap-0.5 mt-0.5 flex-wrap justify-center max-w-full">
-                      {dayEvents.slice(0, 3).map((ev, ei) => (
-                        <span key={ei} className={`w-1.5 h-1.5 rounded-full ${CAL_COLOR_MAP[ev.color]}`} />
+                      {dayEvents.slice(0, 4).map((ev, ei) => (
+                        <span key={ei} className={`w-1.5 h-1.5 rounded-full ${CAL_COLOR_MAP[ev.color] ?? 'bg-gray-500'}`} />
                       ))}
-                      {dayEvents.length > 3 && <span className="text-[8px] text-gray-500">+{dayEvents.length - 3}</span>}
+                      {dayEvents.length > 4 && (
+                        <span className="text-[8px] text-gray-500">+{dayEvents.length - 4}</span>
+                      )}
                     </div>
                   )}
                 </button>
@@ -3097,27 +3222,49 @@ function CalendarSection({ onSelect }: { onSelect?: (symbol: string) => void }) 
                 {parseInt(selectedDate.slice(4, 6))}월 {parseInt(selectedDate.slice(6, 8))}일 일정
                 {selectedEvents.length === 0 && <span className="text-gray-600 ml-2">없음</span>}
               </div>
-              {selectedEvents.map((ev, i) => (
-                <div
-                  key={i}
-                  className={`flex items-start gap-2 text-xs rounded-lg px-2.5 py-1.5 border
-                    ${ev.color === 'blue'   ? 'text-blue-300 bg-blue-900/30 border-blue-800/50' :
-                      ev.color === 'orange' ? 'text-orange-300 bg-orange-900/30 border-orange-800/50' :
-                      ev.color === 'green'  ? 'text-green-300 bg-green-900/30 border-green-800/50' :
-                      ev.color === 'red'    ? 'text-red-300 bg-red-900/30 border-red-800/50' :
-                                             'text-purple-300 bg-purple-900/30 border-purple-800/50'}`}
-                >
-                  <span className="text-[10px] opacity-60 shrink-0 mt-0.5 whitespace-nowrap">
-                    {CAL_TYPE_LABEL[ev.type] ?? ev.type}
-                  </span>
-                  <span
-                    className={ev.ticker && onSelect ? 'cursor-pointer hover:underline underline-offset-2 flex-1' : 'flex-1'}
-                    onClick={() => ev.ticker && onSelect && onSelect(ev.ticker)}
+              {selectedEvents.map((ev, i) => {
+                const evKey = `${selectedDate}-${i}`
+                const desc = CAL_TYPE_DESC[ev.type]
+                const isExpanded = expandedEvent === evKey
+                const hasDesc = !!desc
+                return (
+                  <div
+                    key={i}
+                    className={`rounded-lg border overflow-hidden
+                      ${CAL_CARD_STYLE[ev.color] ?? 'text-gray-300 bg-gray-800 border-gray-700'}`}
                   >
-                    {ev.label}
-                  </span>
-                </div>
-              ))}
+                    {/* 메인 행 */}
+                    <div
+                      className={`flex items-start gap-2 text-xs px-2.5 py-1.5
+                        ${hasDesc ? 'cursor-pointer select-none' : ''}`}
+                      onClick={() => hasDesc && setExpandedEvent(isExpanded ? null : evKey)}
+                    >
+                      <span className="text-[10px] opacity-60 shrink-0 mt-0.5 whitespace-nowrap">
+                        {CAL_TYPE_LABEL[ev.type] ?? ev.type}
+                      </span>
+                      <span
+                        className={`flex-1 ${ev.ticker && onSelect ? 'cursor-pointer hover:underline underline-offset-2' : ''}`}
+                        onClick={e => {
+                          if (ev.ticker && onSelect) { e.stopPropagation(); onSelect(ev.ticker) }
+                        }}
+                      >
+                        {ev.label}
+                      </span>
+                      {hasDesc && (
+                        <span className="opacity-40 text-[10px] shrink-0 mt-0.5">
+                          {isExpanded ? '▲' : '▼'}
+                        </span>
+                      )}
+                    </div>
+                    {/* 설명 펼침 */}
+                    {isExpanded && desc && (
+                      <div className="px-2.5 pb-2 pt-0.5 text-[11px] opacity-75 leading-relaxed border-t border-current/20">
+                        {desc}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
         </>

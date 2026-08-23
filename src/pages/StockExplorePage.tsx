@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   aiApi, screenerApi, watchlistApi,
   type HealthResponse, type ScreenerFilters, type ScreenerRegime,
@@ -14,6 +14,7 @@ import ScreenerPage from './ScreenerPage'
 export default function StockExplorePage() {
   const location = useLocation()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const activeTab = location.pathname === '/screener' ? 'screener' : 'recommend'
 
@@ -146,6 +147,13 @@ export default function StockExplorePage() {
       .catch(() => {})
   }, [])
 
+  // ?ticker= URL 파라미터로 프로파일 자동 열기 (새 창으로 열기 기능)
+  useEffect(() => {
+    const ticker = searchParams.get('ticker')
+    if (!ticker) return
+    handleStockSelect({ symbol: ticker, name: '', market: '' })
+  }, [])
+
   // 업데이트 완료 시 regime 재조회
   useEffect(() => {
     if (updateDoneTick === 0) return
@@ -238,6 +246,17 @@ export default function StockExplorePage() {
               스크리너
             </Link>
           </div>
+
+          {/* 프로파일 열림 시 위치 표시 */}
+          {(profile || profileLoading) && (
+            <div className="flex items-center gap-1 text-xs text-gray-500">
+              <span>{activeTab === 'screener' ? '스크리너' : '대시보드'}</span>
+              <span>›</span>
+              <span className="text-gray-300 font-medium truncate max-w-[120px]">
+                {profile?.stock.name ?? '조회 중...'}
+              </span>
+            </div>
+          )}
 
           <div className="ml-auto flex items-center gap-3">
             <Link to="/paper-trading" className="text-purple-400 hover:text-purple-300 text-xs transition-colors hidden sm:block">
