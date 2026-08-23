@@ -51,11 +51,13 @@ CREATE TABLE IF NOT EXISTS fundamentals (
 -- 일별 수급 데이터
 -- foreign_net: 외국인 보유비율(%) — 일별 변화값으로 순매수 방향 추정
 -- inst_net: 기관 순매수 (현재 미수집, 향후 확장용)
+-- foreign_rate_source: 'actual'(실측) | 'estimated'(역산 추정) | NULL(미수집)
 CREATE TABLE IF NOT EXISTS flows (
-    symbol          TEXT NOT NULL,
-    date            TEXT NOT NULL,
-    foreign_net     REAL,           -- 외국인 보유비율 (%)
-    inst_net        REAL,           -- 기관 순매수 (향후 확장)
+    symbol              TEXT NOT NULL,
+    date                TEXT NOT NULL,
+    foreign_net         REAL,           -- 외국인 보유비율 (%)
+    inst_net            REAL,           -- 기관 순매수 (향후 확장)
+    foreign_rate_source TEXT,           -- 'actual' | 'estimated' | NULL
     PRIMARY KEY (symbol, date),
     FOREIGN KEY (symbol) REFERENCES stocks(symbol)
 );
@@ -158,6 +160,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     close_price       INTEGER,          -- 청산가 (종가)
     return_pct        REAL,             -- 수익률 (%)
     holding_days      INTEGER,          -- 보유 거래일 수
+    model_version     TEXT,             -- 서빙 모델 디렉터리명 (추적성용)
+    regime_gate_blocked INTEGER NOT NULL DEFAULT 0,  -- G2 게이트 차단 여부 (0=실진입, 1=shadow)
     created_at        TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at        TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     UNIQUE (symbol, recommended_date)
@@ -227,6 +231,9 @@ CREATE INDEX IF NOT EXISTS idx_mktidx_code        ON market_index   (code, date)
 CREATE INDEX IF NOT EXISTS idx_paper_date         ON paper_trades   (recommended_date);
 CREATE INDEX IF NOT EXISTS idx_paper_status       ON paper_trades   (status);
 CREATE INDEX IF NOT EXISTS idx_history_session    ON history_trades (session_id);
+CREATE INDEX IF NOT EXISTS idx_itk_symbol         ON investor_trading_kis        (symbol);
+CREATE INDEX IF NOT EXISTS idx_itkd_symbol        ON investor_trading_kis_detail (symbol);
+CREATE INDEX IF NOT EXISTS idx_ibp_status         ON investor_backfill_progress  (status);
 
 -- 예측 이력 (append-only, 수정 금지 — 라이브 성과 추적 기반)
 -- score = raw 확률(calibrated 아님), 모델 랭킹과 동일 기준
@@ -303,15 +310,41 @@ def transaction():
         conn.close()
 
 
+def _migrate_db(conn: sqlite3.Connection) -> None:
+    """기존 DB에 누락된 컬럼을 방어적으로 추가한다.
+    PRAGMA table_info로 먼저 확인하므로 이미 존재하는 컬럼은 건너뜀.
+    """
+    migrations = [
+        ("flows",        "foreign_rate_source", "TEXT"),
+        ("paper_trades", "model_version",        "TEXT"),
+        ("paper_trades", "regime_gate_blocked",  "INTEGER NOT NULL DEFAULT 0"),
+    ]
+    for table, col, col_type in migrations:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+            logger.info("마이그레이션: %s.%s 컬럼 추가", table, col)
+
+
 def init_db():
-    """DB 파일 생성 + 스키마 적용"""
+    """DB 파일 생성 + 스키마 적용 + 누락 컬럼 마이그레이션"""
     with transaction() as conn:
         conn.executescript(DDL)
+        _migrate_db(conn)
     logger.info("DB 초기화 완료: %s", DB_PATH)
+
+
+_ALLOWED_TABLES = {
+    "prices", "features", "prediction_log", "prediction_outcomes",
+    "market_index", "flows", "fundamentals", "dividends", "financials",
+    "investor_trading_kis", "investor_trading_kis_detail",
+}
 
 
 def get_latest_date(symbol: str, table: str = "prices") -> Optional[str]:
     """특정 종목의 해당 테이블 마지막 날짜 반환 (증분 업데이트용)"""
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"get_latest_date: 허용되지 않은 테이블: {table!r}")
     with get_connection() as conn:
         row = conn.execute(
             f"SELECT MAX(date) FROM {table} WHERE symbol = ?", (symbol,)
