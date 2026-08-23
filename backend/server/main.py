@@ -200,6 +200,11 @@ class _State:
     # 스크리너: 외국인 보유비율 맵 (flows.foreign_net 최신값, 표시 전용)
     foreign_rate_cache: Optional[Dict[str, float]] = None
     foreign_rate_date: Optional[str] = None
+    # /api/predictions/60d 응답 캐시 (날짜별, top_n=30 고정 기준)
+    predictions_60d_cache: Optional[Dict[str, Any]] = None
+    predictions_60d_date: Optional[str] = None
+    # 배당 분할/병합 보정계수 인메모리 캐시 (CSV 재읽기 방지 — 재학습/서버재시작 시만 갱신)
+    split_correction_factors: Optional[Dict] = None
 
 _state = _State()
 
@@ -266,6 +271,9 @@ def _reload_model_and_cache() -> None:
         _state.sector_flow_date = None
         _state.foreign_rate_cache = None
         _state.foreign_rate_date = None
+        _state.predictions_60d_cache = None
+        _state.predictions_60d_date = None
+        _state.split_correction_factors = None
         invalidate_60d_model_cache()
         invalidate_etf_cache()
         try:
@@ -277,6 +285,21 @@ def _reload_model_and_cache() -> None:
             logger.info("예측 캐시 완료: %d종목", len(_state.predictions_cache[_state.latest_date]))
         except Exception as e:
             logger.warning("예측 캐시 실패: %s", e)
+
+        # 60d 예측 pre-warm (최초 API 요청 지연 방지)
+        try:
+            preds_60d = predict_60d(_state.latest_date, top_n=30)
+            _state.predictions_60d_cache = {
+                "date": _state.latest_date,
+                "predictions": preds_60d,
+                "count": len(preds_60d),
+                "model": "target_60d",
+                "note": "60일 초과수익(횡단면 중앙값 대비 +7% 이상) 예측 모델. 5d 모델과 독립 운용.",
+            }
+            _state.predictions_60d_date = _state.latest_date
+            logger.info("60d 예측 캐시 완료: %d종목", len(preds_60d))
+        except Exception as e:
+            logger.warning("60d 예측 캐시 실패: %s", e)
 
         # regime 모델 스위칭 제거 (2026-07-14): bear_guard UI 제거 시 스위칭 로직도 같이 제거했어야 하나
         # main.py에 잔존했음. 항상 통합 모델(ACTIVE 포인터)만 사용.
@@ -731,6 +754,13 @@ async def get_60d_predictions(
     date: Optional[str] = Query(default=None, description="기준일 YYYYMMDD (미지정=최신)"),
 ) -> Dict[str, Any]:
     target_date = _get_date(date)
+    # top_n=30(기본값)이고 날짜가 캐시 날짜와 같으면 캐시 반환
+    if (
+        top_n == 30
+        and _state.predictions_60d_cache is not None
+        and _state.predictions_60d_date == target_date
+    ):
+        return _state.predictions_60d_cache
     try:
         preds = predict_60d(target_date, top_n=top_n)
     except FileNotFoundError as exc:
@@ -738,13 +768,17 @@ async def get_60d_predictions(
     except Exception as exc:
         logger.exception("predict_60d 오류")
         raise HTTPException(status_code=500, detail=str(exc))
-    return {
+    result = {
         "date":        target_date,
         "predictions": preds,
         "count":       len(preds),
         "model":       "target_60d",
         "note":        "60일 초과수익(횡단면 중앙값 대비 +7% 이상) 예측 모델. 5d 모델과 독립 운용.",
     }
+    if top_n == 30:
+        _state.predictions_60d_cache = result
+        _state.predictions_60d_date = target_date
+    return result
 
 
 @app.get(
@@ -1290,12 +1324,20 @@ def _get_data_freshness() -> Dict[str, Any]:
     with sqlite3.connect(DB_PATH) as conn:
         latest_feature = conn.execute("SELECT MAX(date) FROM features").fetchone()[0]
         latest_flow = conn.execute("SELECT MAX(date) FROM flows").fetchone()[0]
-    stale_days = None
-    if latest_flow:
-        try:
-            stale_days = (datetime.now() - datetime.strptime(latest_flow, "%Y%m%d")).days
-        except ValueError:
-            stale_days = None
+        market_date = conn.execute(
+            "SELECT MAX(date) FROM market_index WHERE code='1001'"
+        ).fetchone()[0]
+    # 거래일 기준 staleness — 달력일(주말 포함) 기준이면 금요일 데이터가 일요일에 "3일"로 오경고
+    stale_days: Optional[int] = None
+    if latest_flow and market_date:
+        if latest_flow >= market_date:
+            stale_days = 0
+        else:
+            with sqlite3.connect(DB_PATH) as conn:
+                stale_days = conn.execute(
+                    "SELECT COUNT(*) FROM market_index WHERE code='1001' AND date > ?",
+                    (latest_flow,),
+                ).fetchone()[0]
     return {
         "latest_feature_date": latest_feature,
         "latest_foreign_rate_date": latest_flow,
@@ -2199,10 +2241,17 @@ def _load_split_correction_factors() -> Dict[Tuple[str, int], float]:
     backend/ml/dividend_split_correction.py가 생성, 검증 경로 load_dividend_yield_pit_corrected()와
     동일 출처). 종목코드 앞자리 0 손실 버그(pandas read_csv가 정수로 잘못 추론하는 것과
     같은 계열, 2026-06-26 발견)를 피하려고 zfill(6)을 명시 적용. 파일 없으면 빈 dict
-    (보정 없음 = 기존 동작과 동일하게 안전 폴백)."""
+    (보정 없음 = 기존 동작과 동일하게 안전 폴백).
+
+    [2026-08-24] 인메모리 캐싱 추가 — 매 screener 요청마다 CSV를 읽던 것을 최초 1회만 읽고
+    _state.split_correction_factors에 보관. 재학습 시 _reload_model_and_cache()에서 None으로
+    초기화해 다음 호출 때 재읽기."""
+    if _state.split_correction_factors is not None:
+        return _state.split_correction_factors
     path = BACKEND_ROOT / "ml" / "dividend_split_correction_factors.csv"
     factors: Dict[Tuple[str, int], float] = {}
     if not path.exists():
+        _state.split_correction_factors = factors
         return factors
     try:
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
@@ -2216,7 +2265,9 @@ def _load_split_correction_factors() -> Dict[Tuple[str, int], float]:
                 factors[(sym, biz_year)] = factor
     except Exception:
         logger.warning("배당 분할보정 계수 로드 실패 — 보정 없이 진행", exc_info=True)
+        _state.split_correction_factors = {}
         return {}
+    _state.split_correction_factors = factors
     return factors
 
 
@@ -3402,7 +3453,9 @@ async def screener_sector_flow() -> Dict[str, Any]:
 
 
 @app.get("/api/screener/sector-flow/analysis", summary="섹터 자금 흐름 종합 분석 보고서")
-async def screener_sector_flow_analysis() -> Dict[str, Any]:
+async def screener_sector_flow_analysis(
+    period: str = Query(default="5d", description="기준 기간: 5d|20d|60d|120d|250d"),
+) -> Dict[str, Any]:
     """
     섹터 자금 흐름 데이터를 기반으로 4가지 분석을 제공:
     1. 기간별 시장 전체 자금 흐름 요약 + 방향 판정
@@ -3535,11 +3588,16 @@ async def screener_sector_flow_analysis() -> Dict[str, Any]:
         except Exception:
             pass
 
-    def _combined_5d(st: Dict) -> float:
-        return (st.get("foreign_5d") or 0) + (st.get("inst_5d") or 0)
+    # 기준 기간 검증
+    _valid_periods = {"5d", "20d", "60d", "120d", "250d"}
+    _period_key = period if period in _valid_periods else "5d"
+    # 급증 기준선: 단기 → 60d, 중기 → 250d, 250d → 없음
+    _baseline_map: Dict[str, Optional[str]] = {"5d": "60d", "20d": "60d", "60d": "250d", "120d": "250d", "250d": None}
+    _baseline_key: Optional[str] = _baseline_map.get(_period_key)
+    _days_map = {"5d": 5, "20d": 20, "60d": 60, "120d": 120, "250d": 250}
 
-    def _combined_60d(st: Dict) -> float:
-        return (st.get("foreign_60d") or 0) + (st.get("inst_60d") or 0)
+    def _combined_for(st: Dict, key: str) -> float:
+        return (st.get(f"foreign_{key}") or 0) + (st.get(f"inst_{key}") or 0)
 
     concentration_list = []
     for s in sectors:
@@ -3547,20 +3605,20 @@ async def screener_sector_flow_analysis() -> Dict[str, Any]:
         if not stocks_in_sector:
             continue
 
-        sector_total_5d = sum(_combined_5d(st) for st in stocks_in_sector)
-        if abs(sector_total_5d) < 0.01:
+        sector_total = sum(_combined_for(st, _period_key) for st in stocks_in_sector)
+        if abs(sector_total) < 0.01:
             continue
 
         # 섹터 합이 양수일 때만 집중도 의미 있음 (유입 섹터 내 쏠림)
-        if sector_total_5d <= 0:
+        if sector_total <= 0:
             continue
 
-        sorted_stocks = sorted(stocks_in_sector, key=lambda st: -_combined_5d(st))
+        sorted_stocks = sorted(stocks_in_sector, key=lambda st: -_combined_for(st, _period_key))
         top1 = sorted_stocks[0] if sorted_stocks else None
         if top1 is None:
             continue
 
-        top1_val = _combined_5d(top1)
+        top1_val = _combined_for(top1, _period_key)
         if top1_val <= 0:
             continue
 
@@ -3573,29 +3631,30 @@ async def screener_sector_flow_analysis() -> Dict[str, Any]:
 
         mktcap_ratio_pct = round(top1_val / mktcap * 100, 2)
 
-        # 급증 비율: 5d 일평균 ÷ 60d 일평균
-        top1_60d = _combined_60d(top1)
+        # 급증 비율: 선택 기간 일평균 ÷ 기준 기간 일평균
         surge_ratio: Optional[float] = None
         surge_label: Optional[str] = None
-        if abs(top1_60d) <= 1.0:
-            surge_label = "신규 유입" if top1_val > 0 else "신규 유출"
-        else:
-            daily_5d  = top1_val  / 5
-            daily_60d = top1_60d  / 60
-            if abs(daily_60d) > 0.001:
-                ratio = daily_5d / daily_60d
-                surge_ratio = round(ratio, 1)
-                if ratio > 3:
-                    surge_label = "급증"
+        if _baseline_key is not None:
+            top1_baseline = _combined_for(top1, _baseline_key)
+            if abs(top1_baseline) <= 1.0:
+                surge_label = "신규 유입" if top1_val > 0 else "신규 유출"
+            else:
+                daily_sel  = top1_val        / _days_map.get(_period_key,   5)
+                daily_base = top1_baseline   / _days_map.get(_baseline_key, 60)
+                if abs(daily_base) > 0.001:
+                    ratio = daily_sel / daily_base
+                    surge_ratio = round(ratio, 1)
+                    if ratio > 3:
+                        surge_label = "급증"
 
-        concentration_pct = round(top1_val / sector_total_5d * 100, 1)
+        concentration_pct = round(top1_val / sector_total * 100, 1)
         entry = {
             "sector_code":       s["code"],
             "sector_name":       s["name"],
-            "sector_total_5d":   round(sector_total_5d, 1),
+            "sector_total":      round(sector_total, 1),
             "top1_symbol":       top1_sym,
             "top1_name":         top1.get("name", ""),
-            "top1_value_5d":     round(top1_val, 1),
+            "top1_value":        round(top1_val, 1),
             "concentration_pct": concentration_pct,
             "is_concentrated":   concentration_pct > 50,
             "mktcap_ratio_pct":  mktcap_ratio_pct,
@@ -3818,15 +3877,142 @@ async def portfolio_correlation() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/portfolio/prices", summary="포트폴리오 종목 일별 종가 조회")
+async def portfolio_prices(
+    tickers: str = Query(description="쉼표 구분 종목코드 (예: 000660,080220)"),
+    days: int = Query(default=60, ge=1, le=500),
+) -> Dict[str, Any]:
+    """지정 종목들의 최근 N거래일 종가를 반환."""
+    symbols = [s.strip() for s in tickers.split(",") if s.strip()]
+    if not symbols:
+        return {"symbols": [], "data": {}}
+
+    with _db_get_connection() as conn:
+        trading_days = sorted(set(
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT date FROM market_index ORDER BY date DESC LIMIT ?",
+                (days * 2,)
+            ).fetchall()
+        ))[-days:]
+
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for sym in symbols:
+            rows = conn.execute(
+                "SELECT date, close FROM prices WHERE symbol=? AND date >= ? ORDER BY date",
+                (sym, trading_days[0] if trading_days else "19000101")
+            ).fetchall()
+            result[sym] = [{"date": r[0], "close": r[1]} for r in rows]
+
+    return {"symbols": symbols, "data": result, "trading_days": len(trading_days)}
+
+
+@app.get("/api/sector-flows/analysis", summary="섹터 자금흐름 종합 분석")
+async def sector_flows_analysis(
+    period: str = Query(default="combined_60d"),
+) -> Dict[str, Any]:
+    """섹터 자금흐름 데이터를 기반으로 종합 분석 결과를 반환."""
+    # 트리맵 섹터 데이터에서 분석 요약 생성
+    try:
+        sector_data = _state.sector_flow_cache
+        if not sector_data:
+            return {"period": period, "sectors": [], "summary": "섹터 데이터 없음", "top_inflow": [], "top_outflow": []}
+
+        sectors = sector_data.get("sectors", [])
+        period_key = period if period in ("combined_5d", "combined_20d", "combined_60d") else "combined_60d"
+
+        sorted_sectors = sorted(
+            [s for s in sectors if s.get(period_key) is not None],
+            key=lambda s: s.get(period_key, 0),
+            reverse=True,
+        )
+
+        top_inflow = [{"code": s["code"], "name": s["name"], "flow": s.get(period_key, 0)} for s in sorted_sectors[:5]]
+        top_outflow = [{"code": s["code"], "name": s["name"], "flow": s.get(period_key, 0)} for s in sorted_sectors[-5:]]
+
+        return {
+            "period": period,
+            "sector_count": len(sectors),
+            "top_inflow": top_inflow,
+            "top_outflow": top_outflow,
+            "summary": f"{len(top_inflow)}개 유입 / {len(top_outflow)}개 유출 섹터",
+        }
+    except Exception as e:
+        logger.exception("sector-flows/analysis 오류")
+        return {"period": period, "sectors": [], "summary": f"오류: {e}", "top_inflow": [], "top_outflow": []}
+
+
 @app.get("/api/calendar", summary="월간 캘린더 이벤트 조회")
 async def calendar_events(
     year: int = Query(default=2026, ge=2020, le=2030),
     month: int = Query(default=8, ge=1, le=12),
 ) -> List[Dict[str, Any]]:
-    import json as _json
     import calendar as _cal
+    from datetime import date as _date, timedelta as _td
 
-    # 월 범위 계산
+    # ── 정적 날짜 세트 (하드코딩) ──────────────────────────────────
+    # FOMC 기준금리 결정일 (미국 동부시간 기준, 한국은 익일 오전)
+    _FOMC: set[str] = {
+        "20250129","20250319","20250507","20250618",
+        "20250730","20250917","20251029","20251210",
+        "20260128","20260318","20260429","20260610",
+        "20260729","20260916","20261028","20261209",
+        "20270127","20270317","20270428","20270609",
+        "20270728","20270915","20271027","20271208",
+    }
+    # 한국은행 금융통화위원회 기준금리 결정일
+    _BOK: set[str] = {
+        "20250116","20250225","20250417","20250529",
+        "20250710","20250828","20251016","20251127",
+        "20260115","20260226","20260416","20260528",
+        "20260709","20260827","20261015","20261126",
+        "20270114","20270225","20270415","20270527",
+        "20270708","20270826","20271014","20271125",
+    }
+    # MSCI 반기 리밸런싱 발효일 (2/5/8/11월 말일 장 마감 후)
+    _MSCI: set[str] = {
+        "20250228","20250530","20250829","20251128",
+        "20260227","20260529","20260828","20261127",
+        "20270226","20270528","20270827","20271126",
+    }
+    # 한국 공휴일/휴장일 (확정 + 근사) — market_index로 과거 보정
+    _KR_HOLIDAYS: set[str] = {
+        # 2025
+        "20250101","20250128","20250129","20250130",
+        "20250303",  # 삼일절 대체(3/1=토)
+        "20250505","20250506",  # 어린이날+부처님오신날
+        "20250606","20250815",
+        "20251003","20251006","20251007","20251008",  # 추석연휴+한글날대체
+        "20251009","20251225",
+        # 2026
+        "20260101","20260127","20260128","20260129",
+        "20260302",  # 삼일절 대체(3/1=일)
+        "20260505","20260526",  # 어린이날+부처님오신날
+        "20260606","20260815","20260817",  # 현충일·광복절·대체
+        "20260921","20260922","20260923",  # 추석 연휴 (추정)
+        "20261003","20261005",  # 개천절+대체
+        "20261009","20261225",
+        # 2027
+        "20270101","20270215","20270216","20270217",
+        "20270301","20270505","20270515",
+        "20270606","20270816",  # 광복절 대체(8/15=일)
+        "20271004","20271005","20271006",  # 추석 연휴 (추정)
+        "20271009","20271225",
+    }
+    _EARNINGS_MONTHS = {1, 4, 7, 10}   # 실적 발표 시즌 월
+    _QUAD_MONTHS = {3, 6, 9, 12}        # 쿼드러플 위칭 월
+
+    # ── 헬퍼 함수 ────────────────────────────────────────────────
+    def _second_thursday(yr: int, mo: int) -> str:
+        """해당 월의 두 번째 목요일 날짜 반환 (YYYYMMDD)."""
+        first_wd = _cal.weekday(yr, mo, 1)          # 0=월
+        first_thu = 1 + (3 - first_wd) % 7          # 첫 번째 목요일
+        second_thu = first_thu + 7
+        return f"{yr:04d}{mo:02d}{second_thu:02d}"
+
+    def _in_month(d: str) -> bool:
+        return d[:6] == f"{year:04d}{month:02d}"
+
+    # 월 범위
     first_day = f"{year:04d}{month:02d}01"
     last_day_num = _cal.monthrange(year, month)[1]
     last_day = f"{year:04d}{month:02d}{last_day_num:02d}"
@@ -3834,7 +4020,33 @@ async def calendar_events(
     events: List[Dict[str, Any]] = []
 
     with _db_get_connection() as conn:
-        # 1. 포지션 진입일 (파랑) — horizon=60, open
+        # ── 거래일 목록 로드 ────────────────────────────────────
+        td_sorted = sorted(set(
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT date FROM market_index ORDER BY date"
+            ).fetchall()
+        ))
+        td_set = set(td_sorted)
+        td_index = {d: i for i, d in enumerate(td_sorted)}
+        last_td = td_sorted[-1] if td_sorted else "20260101"
+
+        def _estimate_expiry(rdate: str, offset: int = 60) -> str:
+            if rdate in td_index:
+                idx_r = td_index[rdate] + offset
+                if idx_r < len(td_sorted):
+                    return td_sorted[idx_r]
+                remaining = idx_r - len(td_sorted) + 1
+                cur = _date(int(last_td[:4]), int(last_td[4:6]), int(last_td[6:8]))
+                counted = 0
+                while counted < remaining:
+                    cur += _td(days=1)
+                    if cur.weekday() < 5:
+                        counted += 1
+                return cur.strftime("%Y%m%d")
+            rd = _date(int(rdate[:4]), int(rdate[4:6]), int(rdate[6:8]))
+            return (rd + _td(days=int(offset * 7 / 5))).strftime("%Y%m%d")
+
+        # 1. 포지션 진입일 (파랑) — horizon=60
         rows = conn.execute(
             """SELECT pt.symbol, pt.recommended_date, s.name
                FROM paper_trades pt
@@ -3844,67 +4056,25 @@ async def calendar_events(
             (first_day, last_day),
         ).fetchall()
         for sym, rdate, name in rows:
-            label = f"{name or sym}({sym})" if name else sym
-            events.append({
-                "date": rdate,
-                "type": "position_entry",
-                "color": "blue",
-                "label": f"진입: {label}",
-                "ticker": sym,
-            })
+            lbl = f"{name or sym}({sym})" if name else sym
+            events.append({"date": rdate, "type": "position_entry", "color": "blue",
+                           "label": f"진입: {lbl}", "ticker": sym})
 
-        # 2. 포지션 만기일 (주황) — 진입일로부터 60거래일 후
+        # 2. 포지션 만기일 (주황) — 열린 60d 포지션
         open_rows = conn.execute(
             """SELECT pt.symbol, pt.recommended_date, s.name
                FROM paper_trades pt
                LEFT JOIN stocks s ON pt.symbol = s.symbol
                WHERE pt.horizon = 60 AND pt.status = 'open'""",
         ).fetchall()
-        # 거래일 목록 로드 (중복 제거 — market_index에 날짜당 KOSPI/KOSDAQ 2행)
-        td_sorted = sorted(set(
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT date FROM market_index ORDER BY date"
-            ).fetchall()
-        ))
-        td_index = {d: i for i, d in enumerate(td_sorted)}
-        last_td = td_sorted[-1] if td_sorted else "20260101"
-
-        from datetime import date as _date, timedelta as _td
-        def _estimate_expiry(rdate: str, offset: int = 60) -> str:
-            """거래일 목록 내에 있으면 정확한 날짜, 범위 초과면 주말 제외 추정."""
-            if rdate in td_index:
-                idx_r = td_index[rdate] + offset
-                if idx_r < len(td_sorted):
-                    return td_sorted[idx_r]
-                # 남은 거래일을 주말 건너뛰며 추정
-                remaining = idx_r - len(td_sorted) + 1
-                cur = _date(int(last_td[:4]), int(last_td[4:6]), int(last_td[6:8]))
-                counted = 0
-                while counted < remaining:
-                    cur += _td(days=1)
-                    if cur.weekday() < 5:  # 월~금
-                        counted += 1
-                return cur.strftime("%Y%m%d")
-            # rdate가 목록에 없으면 달력 기준 근사 (60거래일 ≈ 84일)
-            from datetime import date as _d2
-            rd = _d2(int(rdate[:4]), int(rdate[4:6]), int(rdate[6:8]))
-            return (rd + _td(days=int(offset * 7 / 5))).strftime("%Y%m%d")
-
         for sym, rdate, name in open_rows:
             expiry = _estimate_expiry(rdate, 60)
-            expiry_y = int(expiry[:4])
-            expiry_m = int(expiry[4:6])
-            if expiry_y == year and expiry_m == month:
-                label = f"{name or sym}({sym})" if name else sym
-                events.append({
-                    "date": expiry,
-                    "type": "position_expiry",
-                    "color": "orange",
-                    "label": f"만기: {label}",
-                    "ticker": sym,
-                })
+            if _in_month(expiry):
+                lbl = f"{name or sym}({sym})" if name else sym
+                events.append({"date": expiry, "type": "position_expiry", "color": "orange",
+                               "label": f"만기: {lbl}", "ticker": sym})
 
-        # 3. 배당기준일 (초록)
+        # 3. 배당기준일 / 배당락일 (초록)
         div_rows = conn.execute(
             """SELECT d.symbol, d.record_date, d.ex_dividend_date, d.dps, s.name
                FROM dividends d
@@ -3914,25 +4084,40 @@ async def calendar_events(
             (first_day, last_day, first_day, last_day),
         ).fetchall()
         for sym, rdate, ex_date, dps, name in div_rows:
-            label = f"{name or sym}({sym})" if name else sym
+            lbl = f"{name or sym}({sym})" if name else sym
+            dps_str = f" ({dps:,}원)" if dps else ""
             if rdate and first_day <= rdate <= last_day:
-                events.append({
-                    "date": rdate,
-                    "type": "dividend_record",
-                    "color": "green",
-                    "label": f"배당기준일: {label}" + (f" ({dps:,}원)" if dps else ""),
-                    "ticker": sym,
-                })
+                events.append({"date": rdate, "type": "dividend_record", "color": "green",
+                               "label": f"배당기준일: {lbl}{dps_str}", "ticker": sym})
             if ex_date and first_day <= ex_date <= last_day:
-                events.append({
-                    "date": ex_date,
-                    "type": "dividend_exdate",
-                    "color": "green",
-                    "label": f"배당락일: {label}" + (f" ({dps:,}원)" if dps else ""),
-                    "ticker": sym,
-                })
+                events.append({"date": ex_date, "type": "dividend_exdate", "color": "green",
+                               "label": f"배당락일: {lbl}{dps_str}", "ticker": sym})
 
-        # 4. 시그널 이벤트 (빨강)
+        # 4. 배당금 지급일 추정 (청록) — 보유 중 60d 포지션 종목의 배당만
+        held_syms = set(r[0] for r in open_rows)
+        if held_syms:
+            pay_rows = conn.execute(
+                f"""SELECT d.symbol, d.record_date, d.dps, s.name
+                   FROM dividends d
+                   LEFT JOIN stocks s ON d.symbol = s.symbol
+                   WHERE d.symbol IN ({','.join('?' for _ in held_syms)})
+                     AND d.record_date IS NOT NULL
+                   ORDER BY d.record_date DESC""",
+                list(held_syms),
+            ).fetchall()
+            for sym, rdate, dps, name in pay_rows:
+                try:
+                    rd = _date(int(rdate[:4]), int(rdate[4:6]), int(rdate[6:8]))
+                    pay_d = (rd + _td(days=90)).strftime("%Y%m%d")
+                except Exception:
+                    continue
+                if _in_month(pay_d):
+                    lbl = f"{name or sym}({sym})" if name else sym
+                    dps_str = f" ({dps:,}원)" if dps else ""
+                    events.append({"date": pay_d, "type": "dividend_payment", "color": "teal",
+                                   "label": f"배당지급(추정): {lbl}{dps_str}", "ticker": sym})
+
+        # 5. 시그널 이벤트 (빨강)
         sig_rows = conn.execute(
             """SELECT event_type, ticker, message, created_at
                FROM signal_log
@@ -3942,32 +4127,75 @@ async def calendar_events(
         ).fetchall()
         for etype, ticker, message, created_at in sig_rows:
             date_part = created_at[:10].replace("-", "")
-            events.append({
-                "date": date_part,
-                "type": "signal_event",
-                "color": "red",
-                "label": message,
-                "ticker": ticker,
-            })
+            events.append({"date": date_part, "type": "signal_event", "color": "red",
+                           "label": message, "ticker": ticker})
 
-    # 5. 시스템 일정 (보라) — 하드코딩
-    system_schedules = [
-        {"date": "20261001", "label": "정기 재학습 예정 (5d+60d)"},
-        {"date": "20261201", "label": "정기 재학습 예정 (5d+60d)"},
-    ]
-    for s in system_schedules:
-        sdate = s["date"]
-        sy, sm = int(sdate[:4]), int(sdate[4:6])
-        if sy == year and sm == month:
-            events.append({
-                "date": sdate,
-                "type": "system_schedule",
-                "color": "purple",
-                "label": s["label"],
-                "ticker": None,
-            })
+        # 6. 공휴일/휴장일 (회색) — market_index로 과거 보정, 미래는 하드코딩
+        weekdays_in_month = []
+        for d in range(1, last_day_num + 1):
+            dt = _date(year, month, d)
+            if dt.weekday() < 5:  # 월~금
+                weekdays_in_month.append(f"{year:04d}{month:02d}{d:02d}")
 
-    # 날짜순 정렬
+        market_latest = last_td  # market_index 최신 거래일
+        for wd in weekdays_in_month:
+            if wd <= market_latest:
+                # market_index에 없는 평일 → 실제 휴장일
+                if wd not in td_set:
+                    events.append({"date": wd, "type": "market_holiday", "color": "gray",
+                                   "label": "휴장일", "ticker": None})
+            else:
+                # 미래: 하드코딩 공휴일 세트로 판단
+                if wd in _KR_HOLIDAYS:
+                    events.append({"date": wd, "type": "market_holiday", "color": "gray",
+                                   "label": "공휴일(예정)", "ticker": None})
+
+    # ── DB 바깥 — 하드코딩 이벤트 ──────────────────────────────────
+
+    # 7. 실적 시즌 마커 (노랑) — 1/4/7/10월의 15~20일
+    if month in _EARNINGS_MONTHS:
+        mid_date = f"{year:04d}{month:02d}15"
+        events.append({"date": mid_date, "type": "earnings_season", "color": "yellow",
+                       "label": "실적 발표 시즌 시작 (분기)", "ticker": None})
+        end_date = f"{year:04d}{month:02d}20"
+        events.append({"date": end_date, "type": "earnings_season", "color": "yellow",
+                       "label": "실적 발표 집중 구간", "ticker": None})
+
+    # 8. 옵션/선물 만기일 — 매월 두 번째 목요일
+    second_thu = _second_thursday(year, month)
+    if _in_month(second_thu):
+        if month in _QUAD_MONTHS:
+            events.append({"date": second_thu, "type": "quadruple_witching", "color": "rose",
+                           "label": "쿼드러플 위칭 (네 마녀의 날) ⚠️", "ticker": None})
+        else:
+            events.append({"date": second_thu, "type": "options_expiry", "color": "amber",
+                           "label": "주식옵션·선물 만기일", "ticker": None})
+
+    # 9. FOMC 기준금리 결정일 (회청색)
+    for d in _FOMC:
+        if _in_month(d):
+            events.append({"date": d, "type": "fomc", "color": "slate",
+                           "label": "FOMC 기준금리 결정 (미국)", "ticker": None})
+
+    # 10. 한국은행 금통위 (회청색)
+    for d in _BOK:
+        if _in_month(d):
+            events.append({"date": d, "type": "bok_rate", "color": "slate",
+                           "label": "한국은행 금통위 기준금리 결정", "ticker": None})
+
+    # 11. MSCI 리밸런싱 (보라 테두리)
+    for d in _MSCI:
+        if _in_month(d):
+            events.append({"date": d, "type": "msci_rebalance", "color": "violet",
+                           "label": "MSCI 리밸런싱 발효일 (변동성↑)", "ticker": None})
+
+    # 12. 시스템 일정 (보라)
+    for sched in [{"date": "20261001", "label": "정기 재학습 예정 (5d+60d)"},
+                  {"date": "20261201", "label": "정기 재학습 예정 (5d+60d)"}]:
+        if _in_month(sched["date"]):
+            events.append({"date": sched["date"], "type": "system_schedule", "color": "purple",
+                           "label": sched["label"], "ticker": None})
+
     events.sort(key=lambda x: x["date"])
     return events
 
