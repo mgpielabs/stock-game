@@ -1,1 +1,1 @@
-{"started_at": 1787507012.78128, "current_stage": 12, "current_stage_name": "시그널 감지", "total_stages": 12, "last_heartbeat": 1787509206.1382678, "status": "done"}
+{"started_at": 1787576898.9008257, "current_stage": 3, "current_stage_name": "서버 재시작 (포트 8001)", "total_stages": 12, "last_heartbeat": 1787577892.5072873, "status": "error"}

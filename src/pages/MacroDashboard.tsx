@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`)
@@ -30,16 +31,19 @@ interface SeriesPoint {
 // ── 상수 ─────────────────────────────────────────────────────────────────────
 
 const INDICATORS = [
-  { key: 'usd_krw',    label: 'USD/KRW', unit: '원', color: '#60a5fa' },
-  { key: 'jpy_krw',    label: 'JPY/KRW (100엔)', unit: '원', color: '#818cf8' },
-  { key: 'vix',        label: 'VIX 공포지수', unit: '', color: '#f87171' },
-  { key: 'us10y',      label: '미국 10Y 금리', unit: '%', color: '#fb923c' },
-  { key: 'wti',        label: 'WTI 원유', unit: 'USD', color: '#a3e635' },
-  { key: 'kospi',      label: 'KOSPI', unit: '', color: '#34d399' },
-  { key: 'kosdaq',     label: 'KOSDAQ', unit: '', color: '#22d3ee' },
-  { key: 'foreign_net',label: '외국인 순매수', unit: '억원', color: '#f472b6' },
-  { key: 'inst_net',   label: '기관 순매수', unit: '억원', color: '#c084fc' },
+  { key: 'usd_krw',     label: 'USD/KRW',         unit: '원',   color: '#60a5fa' },
+  { key: 'jpy_krw',     label: 'JPY/KRW (100엔)',  unit: '원',   color: '#818cf8' },
+  { key: 'vix',         label: 'VIX 공포지수',      unit: '',     color: '#f87171' },
+  { key: 'us10y',       label: '미국 10Y 금리',     unit: '%',    color: '#fb923c' },
+  { key: 'wti',         label: 'WTI 원유',          unit: 'USD',  color: '#a3e635' },
+  { key: 'kospi',       label: 'KOSPI',             unit: '',     color: '#34d399' },
+  { key: 'kosdaq',      label: 'KOSDAQ',            unit: '',     color: '#22d3ee' },
+  { key: 'foreign_net', label: '외국인 순매수',      unit: '억원', color: '#f472b6' },
+  { key: 'inst_net',    label: '기관 순매수',        unit: '억원', color: '#c084fc' },
 ]
+
+// 항상 표시하는 4개 미니 차트
+const MINI_KEYS = ['usd_krw', 'vix', 'kospi', 'wti']
 
 const PERIOD_DAYS: Record<string, number> = {
   '1M': 30, '3M': 90, '6M': 180, '1Y': 260,
@@ -77,14 +81,15 @@ const IMPACT_RULES = [
   },
   {
     id: 'foreign_buy',
-    condition: (s: MacroSummary) => (s['foreign_net']?.value ?? 0) > 500e8,
+    // foreign_net 값은 백만원 단위 → 1000억 = 100,000백만원
+    condition: (s: MacroSummary) => (s['foreign_net']?.value ?? 0) > 100_000,
     title: '🟢 외국인 대규모 순매수',
     text: '외국인 자금 유입 신호. 대형주·코스피200 종목 상대 강세 가능성.',
     color: 'green',
   },
   {
     id: 'foreign_sell',
-    condition: (s: MacroSummary) => (s['foreign_net']?.value ?? 0) < -500e8,
+    condition: (s: MacroSummary) => (s['foreign_net']?.value ?? 0) < -100_000,
     title: '🔴 외국인 대규모 순매도',
     text: '수급 경보 발령. 인버스/달러 헷지 고려, 개별 종목 스크리닝 강화 권장.',
     color: 'red',
@@ -93,10 +98,20 @@ const IMPACT_RULES = [
 
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
 
+/** 외국인/기관: DB값이 백만원 단위 → /100 = 억원 */
 function fmtValue(key: string, val: number): string {
   if (key === 'foreign_net' || key === 'inst_net') {
-    const hundredM = val / 1e8
-    return `${hundredM >= 0 ? '+' : ''}${hundredM.toFixed(0)}억원`
+    const eok = val / 100  // 억원
+    const sign = eok >= 0 ? '+' : ''
+    if (Math.abs(eok) >= 10000) {
+      return `${sign}${(eok / 10000).toFixed(2)}조원`
+    }
+    if (Math.abs(eok) >= 1) {
+      return `${sign}${eok.toFixed(0)}억원`
+    }
+    // 1억 미만 → 백만원 단위
+    const man = val / 100 * 100  // 백만원 = val / 1 (이미 백만원)
+    return `${man >= 0 ? '+' : ''}${man.toFixed(0)}백만원`
   }
   if (key === 'us10y') return `${val.toFixed(2)}%`
   if (key === 'usd_krw' || key === 'jpy_krw') return `${val.toFixed(1)}원`
@@ -105,10 +120,24 @@ function fmtValue(key: string, val: number): string {
   return val.toLocaleString('ko-KR', { maximumFractionDigits: 2 })
 }
 
-function fmtChange(item: MacroItem): string {
+function fmtChange(item: MacroItem, key: string): string {
   if (item.change === null || item.change_pct === null) return '—'
+  // 값이 거의 0이거나 변화율이 비정상적으로 크면 의미 없음
+  if (Math.abs(item.change_pct) > 300) return '—'
+  // 수급 지표: 기준값이 작아 %가 의미 없는 경우
+  if ((key === 'foreign_net' || key === 'inst_net') && Math.abs(item.change_pct) > 200) return '—'
   const sign = item.change >= 0 ? '+' : ''
   return `${sign}${item.change_pct.toFixed(2)}%`
+}
+
+/** 수급 지표용 변화량(억원) 표시 */
+function fmtChangeAbs(item: MacroItem, key: string): string | null {
+  if (key !== 'foreign_net' && key !== 'inst_net') return null
+  if (item.change === null) return null
+  const eok = item.change / 100
+  const sign = eok >= 0 ? '+' : ''
+  if (Math.abs(eok) >= 1) return `${sign}${eok.toFixed(0)}억`
+  return null
 }
 
 function changeCls(item: MacroItem): string {
@@ -117,6 +146,7 @@ function changeCls(item: MacroItem): string {
 }
 
 function fmtDate(dt: string): string {
+  if (dt.length !== 8) return dt
   return `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`
 }
 
@@ -126,25 +156,33 @@ function fmtAxis(dt: string): string {
 
 // ── 차트 컴포넌트 ─────────────────────────────────────────────────────────────
 
-function MacroChart({
-  indicator, color, period,
-}: { indicator: typeof INDICATORS[0]; color: string; period: number }) {
+interface MacroChartProps {
+  indicator: typeof INDICATORS[0]
+  period: number
+  mini?: boolean
+  color?: string
+}
+
+function MacroChart({ indicator, period, mini = false, color }: MacroChartProps) {
+  const lineColor = color ?? indicator.color
   const [data, setData] = useState<SeriesPoint[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setLoading(true)
-    apiFetch(`/api/macro/series?indicator=${indicator.key}&days=${period}`)
-      .then((r: any) => setData(r.data ?? []))
+    apiFetch<{ data: SeriesPoint[] }>(`/api/macro/series?indicator=${indicator.key}&days=${period}`)
+      .then(r => setData(r.data ?? []))
       .catch(() => setData([]))
       .finally(() => setLoading(false))
   }, [indicator.key, period])
 
+  const height = mini ? 80 : 120
+
   if (loading) return (
-    <div className="h-28 flex items-center justify-center text-gray-600 text-xs">로딩 중…</div>
+    <div className={`flex items-center justify-center text-gray-600 text-xs`} style={{ height }}>로딩 중…</div>
   )
   if (!data.length) return (
-    <div className="h-28 flex items-center justify-center text-gray-600 text-xs">데이터 없음</div>
+    <div className={`flex items-center justify-center text-gray-600 text-xs`} style={{ height }}>데이터 없음</div>
   )
 
   const vals = data.map(d => d.value)
@@ -152,29 +190,34 @@ function MacroChart({
   const maxV = Math.max(...vals)
   const mid = (minV + maxV) / 2
 
+  const isFlow = indicator.key === 'foreign_net' || indicator.key === 'inst_net'
+
   return (
-    <ResponsiveContainer width="100%" height={112}>
+    <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="2 2" stroke="#1e293b" />
         <XAxis
           dataKey="date"
           tickFormatter={fmtAxis}
-          tick={{ fill: '#64748b', fontSize: 9 }}
+          tick={{ fill: '#64748b', fontSize: mini ? 8 : 9 }}
           interval="preserveStartEnd"
           tickLine={false}
           axisLine={false}
         />
         <YAxis
           domain={['auto', 'auto']}
-          tick={{ fill: '#64748b', fontSize: 9 }}
-          width={48}
+          tick={{ fill: '#64748b', fontSize: mini ? 8 : 9 }}
+          width={mini ? 36 : 48}
           tickLine={false}
           axisLine={false}
           tickFormatter={(v: number) => {
-            if (indicator.key === 'foreign_net' || indicator.key === 'inst_net') {
-              return `${(v / 1e8).toFixed(0)}억`
+            if (isFlow) {
+              const eok = v / 100
+              if (Math.abs(eok) >= 1000) return `${(eok / 1000).toFixed(0)}천억`
+              return `${eok.toFixed(0)}억`
             }
-            return v.toFixed(indicator.key === 'us10y' ? 2 : 0)
+            if (indicator.key === 'us10y') return v.toFixed(2)
+            return v.toLocaleString('ko-KR', { maximumFractionDigits: 0 })
           }}
         />
         <Tooltip
@@ -182,12 +225,13 @@ function MacroChart({
           labelFormatter={(l: unknown) => fmtDate(String(l))}
           formatter={(v: unknown) => [fmtValue(indicator.key, Number(v)), indicator.label]}
         />
-        <ReferenceLine y={mid} stroke="#334155" strokeDasharray="2 2" />
+        {isFlow && <ReferenceLine y={0} stroke="#475569" strokeDasharray="3 3" />}
+        {!isFlow && <ReferenceLine y={mid} stroke="#334155" strokeDasharray="2 2" />}
         <Line
           type="monotone"
           dataKey="value"
-          stroke={color}
-          strokeWidth={1.5}
+          stroke={lineColor}
+          strokeWidth={mini ? 1 : 1.5}
           dot={false}
           activeDot={{ r: 3 }}
         />
@@ -199,13 +243,16 @@ function MacroChart({
 // ── 요약 카드 ─────────────────────────────────────────────────────────────────
 
 function SummaryCard({
-  ind, item, selected, onSelect,
+  ind, item, selected, onSelect, stale,
 }: {
   ind: typeof INDICATORS[0]
   item: MacroItem | undefined
   selected: boolean
   onSelect: () => void
+  stale?: boolean
 }) {
+  const absChange = item ? fmtChangeAbs(item, ind.key) : null
+
   return (
     <button
       onClick={onSelect}
@@ -216,11 +263,18 @@ function SummaryCard({
       }`}
       style={selected ? { borderColor: ind.color } : {}}
     >
-      <div className="text-xs text-gray-500 mb-1">{ind.label}</div>
+      <div className="flex items-center justify-between mb-1 gap-1">
+        <span className="text-xs text-gray-500 truncate">{ind.label}</span>
+        {stale && (
+          <span className="text-[9px] text-amber-500 bg-amber-900/30 px-1 rounded shrink-0">지연</span>
+        )}
+      </div>
       {item ? (
         <>
           <div className="text-sm font-semibold text-white">{fmtValue(ind.key, item.value)}</div>
-          <div className={`text-xs mt-0.5 ${changeCls(item)}`}>{fmtChange(item)}</div>
+          <div className={`text-xs mt-0.5 ${changeCls(item)}`}>
+            {absChange ?? fmtChange(item, ind.key)}
+          </div>
           <div className="text-xs text-gray-600 mt-0.5">{fmtDate(item.date)}</div>
         </>
       ) : (
@@ -240,13 +294,20 @@ export default function MacroDashboard() {
 
   useEffect(() => {
     setLoading(true)
-    apiFetch('/api/macro/summary')
-      .then((r: any) => setSummary(r))
+    apiFetch<MacroSummary>('/api/macro/summary')
+      .then(r => setSummary(r))
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
 
+  // 전체 지표 중 최신 날짜 → 이보다 오래된 지표는 "지연" 표시
+  const maxDate = useMemo(() =>
+    Object.values(summary).reduce((m, item) => item.date > m ? item.date : m, '00000000'),
+    [summary]
+  )
+
   const selectedInd = INDICATORS.find(i => i.key === selectedKey) ?? INDICATORS[0]
+  const miniInds = INDICATORS.filter(i => MINI_KEYS.includes(i.key))
   const activeRules = IMPACT_RULES.filter(r => r.condition(summary))
 
   return (
@@ -262,22 +323,68 @@ export default function MacroDashboard() {
         <div className="text-center text-gray-500 text-sm py-8">지표 로딩 중…</div>
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-          {INDICATORS.map(ind => (
-            <SummaryCard
-              key={ind.key}
-              ind={ind}
-              item={summary[ind.key]}
-              selected={selectedKey === ind.key}
-              onSelect={() => setSelectedKey(ind.key)}
-            />
-          ))}
+          {INDICATORS.map(ind => {
+            const item = summary[ind.key]
+            const stale = !!item && item.date < maxDate
+            return (
+              <SummaryCard
+                key={ind.key}
+                ind={ind}
+                item={item}
+                selected={selectedKey === ind.key}
+                onSelect={() => setSelectedKey(ind.key)}
+                stale={stale}
+              />
+            )
+          })}
         </div>
       )}
 
-      {/* 시계열 차트 */}
+      {/* 주요 4개 지표 미니 차트 */}
+      <div>
+        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">주요 지표 추이</h3>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {miniInds.map(ind => (
+            <button
+              key={ind.key}
+              onClick={() => setSelectedKey(ind.key)}
+              className={`bg-slate-900/70 border rounded-xl p-3 text-left transition-all hover:bg-slate-800/60 ${
+                selectedKey === ind.key ? 'border-opacity-60' : 'border-gray-800'
+              }`}
+              style={selectedKey === ind.key ? { borderColor: ind.color } : {}}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-gray-400">{ind.label}</span>
+                {summary[ind.key] && (
+                  <span className={`text-xs ${changeCls(summary[ind.key])}`}>
+                    {fmtChange(summary[ind.key], ind.key)}
+                  </span>
+                )}
+              </div>
+              <MacroChart
+                indicator={ind}
+                period={PERIOD_DAYS[period]}
+                mini
+              />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 선택 지표 상세 차트 */}
       <div className="bg-slate-900/70 border border-gray-800 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-medium text-white">{selectedInd.label} 추이</span>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-white">{selectedInd.label} 상세</span>
+            {summary[selectedKey] && (
+              <span className="text-xs text-gray-400">
+                {fmtValue(selectedKey, summary[selectedKey].value)}
+                <span className={`ml-1 ${changeCls(summary[selectedKey])}`}>
+                  ({fmtChange(summary[selectedKey], selectedKey)})
+                </span>
+              </span>
+            )}
+          </div>
           <div className="flex gap-1">
             {Object.keys(PERIOD_DAYS).map(p => (
               <button
@@ -293,6 +400,23 @@ export default function MacroDashboard() {
               </button>
             ))}
           </div>
+        </div>
+        {/* 전체 9개 지표 선택 탭 */}
+        <div className="flex flex-wrap gap-1 mb-3">
+          {INDICATORS.map(ind => (
+            <button
+              key={ind.key}
+              onClick={() => setSelectedKey(ind.key)}
+              className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                selectedKey === ind.key
+                  ? 'text-white border-opacity-60'
+                  : 'text-gray-500 border-gray-700 hover:text-gray-300'
+              }`}
+              style={selectedKey === ind.key ? { borderColor: ind.color, color: ind.color } : {}}
+            >
+              {ind.label}
+            </button>
+          ))}
         </div>
         <MacroChart
           indicator={selectedInd}
@@ -329,7 +453,7 @@ export default function MacroDashboard() {
 
       {/* 비고 */}
       <div className="text-xs text-gray-600 pb-2">
-        외부 데이터: yfinance (USD/KRW, JPY/KRW, VIX, 미국 10Y, WTI). 내부 데이터: KOSPI/KOSDAQ — pykrx, 외국인/기관 순매수 — KIS API. 매일 16:30 자동 갱신.
+        외부 데이터: yfinance (USD/KRW, JPY/KRW, VIX, 미국 10Y, WTI). 내부 데이터: KOSPI/KOSDAQ — pykrx, 외국인/기관 순매수 — KIS API (백만원 단위). 매일 16:30 자동 갱신. "지연" 배지: 다른 지표보다 날짜가 뒤처진 지표.
       </div>
     </div>
   )
