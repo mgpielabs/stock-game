@@ -985,6 +985,7 @@ export interface CalendarEvent {
     | 'yellow' | 'amber' | 'rose' | 'slate' | 'violet' | 'gray'
   label: string
   ticker: string | null
+  related_stocks?: Array<{ symbol: string; name: string }>
 }
 
 export const calendarApi = {
@@ -1003,4 +1004,70 @@ export interface CorrelationResponse {
 
 export const portfolioApi = {
   correlation: () => apiFetch<CorrelationResponse>('/api/portfolio/correlation'),
+}
+
+// ── 내 포트폴리오 ────────────────────────────────────────────────────────────
+
+export interface MyPortfolioItem {
+  id: number
+  ticker: string
+  name: string
+  buy_price: number
+  quantity: number
+  buy_date: string
+  memo?: string | null
+  created_at?: string
+}
+
+export interface MyPortfolioAnalysisItem extends MyPortfolioItem {
+  current_price: number
+  return_pct: number
+  current_value: number
+  pnl: number
+  sector: string
+  weight_pct: number
+}
+
+export interface MyPortfolioSectorWeight {
+  sector: string
+  value: number
+  weight_pct: number
+}
+
+export interface MyPortfolioFlowAlignment {
+  ticker: string
+  name: string
+  sector: string
+  quadrant: 'consistent_inflow' | 'consistent_outflow' | 'short_reversal' | 'neutral'
+  combined_5d: number
+  combined_20d: number
+  combined_60d: number
+}
+
+export interface MyPortfolioAnalysis {
+  date: string
+  summary: {
+    total_invested: number
+    total_value: number
+    total_return_pct: number
+    total_pnl: number
+    stock_count: number
+  }
+  items: MyPortfolioAnalysisItem[]
+  sector_weights: MyPortfolioSectorWeight[]
+  correlation: CorrelationResponse
+  sector_flow_alignment: MyPortfolioFlowAlignment[]
+  event_impact: Record<string, number>
+  error?: string
+}
+
+export const myPortfolioApi = {
+  list: () => apiFetch<MyPortfolioItem[]>('/api/my-portfolio'),
+  add: (body: Omit<MyPortfolioItem, 'id' | 'created_at'>) =>
+    apiFetchWithOptions<MyPortfolioItem>('/api/my-portfolio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  update: (id: number, body: Partial<Omit<MyPortfolioItem, 'id' | 'ticker' | 'created_at'>>) =>
+    apiFetchWithOptions<MyPortfolioItem>(`/api/my-portfolio/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  remove: (id: number) =>
+    apiFetchWithOptions<{ deleted: number }>(`/api/my-portfolio/${id}`, { method: 'DELETE' }),
+  analysis: () => apiFetch<MyPortfolioAnalysis>('/api/my-portfolio/analysis'),
 }

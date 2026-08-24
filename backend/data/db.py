@@ -286,6 +286,17 @@ CREATE TABLE IF NOT EXISTS signal_log (
 );
 CREATE INDEX IF NOT EXISTS idx_signal_log_created ON signal_log (created_at);
 CREATE INDEX IF NOT EXISTS idx_signal_log_type    ON signal_log (event_type);
+
+CREATE TABLE IF NOT EXISTS my_portfolio (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker     TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    buy_price  REAL NOT NULL,
+    quantity   REAL NOT NULL,
+    buy_date   TEXT NOT NULL,
+    memo       TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
 """
 
 

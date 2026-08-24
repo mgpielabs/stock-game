@@ -33,7 +33,7 @@ if _env_file.exists():
             _k, _v = _line.split("=", 1)
             os.environ.setdefault(_k.strip(), _v.strip())
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -4150,44 +4150,147 @@ async def calendar_events(
                     events.append({"date": wd, "type": "market_holiday", "color": "gray",
                                    "label": "공휴일(예정)", "ticker": None})
 
+        # ── 정적 이벤트용 관련 종목 — 전체 시장 기준 쿼리 ──────────────
+        def _label(sym: str, name: str | None) -> dict[str, str]:
+            return {"symbol": sym, "name": name or sym}
+
+        # ETF/ETN/인버스/레버리지 심볼 제외 Set (predictor._get_etf_symbols() 재사용)
+        try:
+            from server.predictor import _get_etf_symbols
+            _etf_syms = _get_etf_symbols()
+        except Exception:
+            _etf_syms: set[str] = set()
+
+        def _not_etf(sym: str) -> bool:
+            return sym not in _etf_syms
+
+        # 최신 prices 날짜 (시총/거래대금 기준)
+        _latest_price_date = conn.execute("SELECT MAX(date) FROM prices").fetchone()[0] or ""
+
+        # 금통위 (bok_rate) — 금융 섹터(KSIC 64~66) 거래대금 상위 5개
+        _financial_stocks = [
+            _label(r[0], r[1]) for r in conn.execute(
+                """SELECT s.symbol, s.name
+                   FROM stocks s
+                   JOIN prices p ON p.symbol = s.symbol AND p.date = ?
+                   WHERE (s.sector LIKE '64%' OR s.sector LIKE '65%' OR s.sector LIKE '66%')
+                     AND p.close IS NOT NULL AND p.volume IS NOT NULL
+                   ORDER BY (p.close * p.volume) DESC LIMIT 20""",
+                (_latest_price_date,),
+            ).fetchall()
+            if _not_etf(r[0])
+        ][:5]
+
+        # FOMC — 반도체(261), 자동차(301~303), 조선(311) 거래대금 상위 5개
+        _export_stocks = [
+            _label(r[0], r[1]) for r in conn.execute(
+                """SELECT s.symbol, s.name
+                   FROM stocks s
+                   JOIN prices p ON p.symbol = s.symbol AND p.date = ?
+                   WHERE (s.sector LIKE '261%'
+                       OR s.sector LIKE '301%' OR s.sector LIKE '302%' OR s.sector LIKE '303%'
+                       OR s.sector LIKE '311%')
+                     AND p.close IS NOT NULL AND p.volume IS NOT NULL
+                   ORDER BY (p.close * p.volume) DESC LIMIT 20""",
+                (_latest_price_date,),
+            ).fetchall()
+            if _not_etf(r[0])
+        ][:5]
+
+        # MSCI — features.foreign_rate 기준 상위 10개 (ETF 제외)
+        _latest_feat_date = conn.execute("SELECT MAX(date) FROM features").fetchone()[0] or ""
+        _high_foreign: list[dict[str, str]] = []
+        if _latest_feat_date:
+            _high_foreign = [
+                _label(r[0], r[1]) for r in conn.execute(
+                    """SELECT f.symbol, s.name
+                       FROM features f
+                       JOIN stocks s ON s.symbol = f.symbol
+                       WHERE f.date = ?
+                         AND f.foreign_rate IS NOT NULL
+                       ORDER BY f.foreign_rate DESC LIMIT 30""",
+                    (_latest_feat_date,),
+                ).fetchall()
+                if _not_etf(r[0])
+            ][:10]
+
+        # 옵션만기/쿼드러플 — 최근 거래대금(close*volume) 상위 10개
+        _high_vol_stocks: list[dict[str, str]] = []
+        if _latest_price_date:
+            _high_vol_stocks = [
+                _label(r[0], r[1]) for r in conn.execute(
+                    """SELECT p.symbol, s.name
+                       FROM prices p
+                       JOIN stocks s ON s.symbol = p.symbol
+                       WHERE p.date = ?
+                         AND p.close IS NOT NULL AND p.volume IS NOT NULL
+                       ORDER BY (p.close * p.volume) DESC LIMIT 30""",
+                    (_latest_price_date,),
+                ).fetchall()
+                if _not_etf(r[0])
+            ][:10]
+
+        # 실적시즌 — 거래대금 상위 10개 (ETF 제외, market_cap 전체 NULL이라 close*volume 대체)
+        _large_cap_stocks: list[dict[str, str]] = []
+        if _latest_price_date:
+            _large_cap_stocks = [
+                _label(r[0], r[1]) for r in conn.execute(
+                    """SELECT p.symbol, s.name
+                       FROM prices p
+                       JOIN stocks s ON s.symbol = p.symbol
+                       WHERE p.date = ?
+                         AND p.close IS NOT NULL AND p.volume IS NOT NULL
+                       ORDER BY (p.close * p.volume) DESC LIMIT 30""",
+                    (_latest_price_date,),
+                ).fetchall()
+                if _not_etf(r[0])
+            ][:10]
+
     # ── DB 바깥 — 하드코딩 이벤트 ──────────────────────────────────
 
     # 7. 실적 시즌 마커 (노랑) — 1/4/7/10월의 15~20일
     if month in _EARNINGS_MONTHS:
         mid_date = f"{year:04d}{month:02d}15"
         events.append({"date": mid_date, "type": "earnings_season", "color": "yellow",
-                       "label": "실적 발표 시즌 시작 (분기)", "ticker": None})
+                       "label": "실적 발표 시즌 시작 (분기)", "ticker": None,
+                       "related_stocks": _large_cap_stocks})
         end_date = f"{year:04d}{month:02d}20"
         events.append({"date": end_date, "type": "earnings_season", "color": "yellow",
-                       "label": "실적 발표 집중 구간", "ticker": None})
+                       "label": "실적 발표 집중 구간", "ticker": None,
+                       "related_stocks": _large_cap_stocks})
 
     # 8. 옵션/선물 만기일 — 매월 두 번째 목요일
     second_thu = _second_thursday(year, month)
     if _in_month(second_thu):
         if month in _QUAD_MONTHS:
             events.append({"date": second_thu, "type": "quadruple_witching", "color": "rose",
-                           "label": "쿼드러플 위칭 (네 마녀의 날) ⚠️", "ticker": None})
+                           "label": "쿼드러플 위칭 (네 마녀의 날) ⚠️", "ticker": None,
+                           "related_stocks": _high_vol_stocks})
         else:
             events.append({"date": second_thu, "type": "options_expiry", "color": "amber",
-                           "label": "주식옵션·선물 만기일", "ticker": None})
+                           "label": "주식옵션·선물 만기일", "ticker": None,
+                           "related_stocks": _high_vol_stocks})
 
     # 9. FOMC 기준금리 결정일 (회청색)
     for d in _FOMC:
         if _in_month(d):
             events.append({"date": d, "type": "fomc", "color": "slate",
-                           "label": "FOMC 기준금리 결정 (미국)", "ticker": None})
+                           "label": "FOMC 기준금리 결정 (미국)", "ticker": None,
+                           "related_stocks": _export_stocks})
 
     # 10. 한국은행 금통위 (회청색)
     for d in _BOK:
         if _in_month(d):
             events.append({"date": d, "type": "bok_rate", "color": "slate",
-                           "label": "한국은행 금통위 기준금리 결정", "ticker": None})
+                           "label": "한국은행 금통위 기준금리 결정", "ticker": None,
+                           "related_stocks": _financial_stocks})
 
     # 11. MSCI 리밸런싱 (보라 테두리)
     for d in _MSCI:
         if _in_month(d):
             events.append({"date": d, "type": "msci_rebalance", "color": "violet",
-                           "label": "MSCI 리밸런싱 발효일 (변동성↑)", "ticker": None})
+                           "label": "MSCI 리밸런싱 발효일 (변동성↑)", "ticker": None,
+                           "related_stocks": _high_foreign})
 
     # 12. 시스템 일정 (보라)
     for sched in [{"date": "20261001", "label": "정기 재학습 예정 (5d+60d)"},
@@ -4332,6 +4435,270 @@ async def proxy_naver_chart(rest_path: str):
 @app.get("/api/naver-search/{rest_path:path}", include_in_schema=False)
 async def proxy_naver_search(rest_path: str):
     return _naver_get(_NAVER_SEARCH_BASE, f"/{rest_path}")
+
+
+# ── 내 포트폴리오 CRUD ────────────────────────────────────────────────────────
+
+@app.get("/api/my-portfolio", summary="내 포트폴리오 목록 조회")
+async def my_portfolio_list() -> List[Dict[str, Any]]:
+    with _db_get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, ticker, name, buy_price, quantity, buy_date, memo, created_at "
+            "FROM my_portfolio ORDER BY created_at DESC"
+        ).fetchall()
+    return [
+        {"id": r[0], "ticker": r[1], "name": r[2], "buy_price": r[3],
+         "quantity": r[4], "buy_date": r[5], "memo": r[6], "created_at": r[7]}
+        for r in rows
+    ]
+
+
+@app.post("/api/my-portfolio", summary="내 포트폴리오 종목 추가")
+async def my_portfolio_add(request: Request) -> Dict[str, Any]:
+    body: Dict[str, Any] = await request.json()
+    ticker   = str(body.get("ticker", "")).strip()
+    name     = str(body.get("name", ticker)).strip()
+    buy_price = float(body.get("buy_price", 0))
+    quantity  = float(body.get("quantity", 1))
+    buy_date  = str(body.get("buy_date", "")).strip()
+    memo      = body.get("memo")
+    if not ticker or buy_price <= 0 or quantity <= 0:
+        raise HTTPException(status_code=400, detail="ticker, buy_price, quantity 필수")
+    with _db_get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO my_portfolio (ticker, name, buy_price, quantity, buy_date, memo) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ticker, name, buy_price, quantity, buy_date, memo),
+        )
+        conn.commit()
+        new_id = cur.lastrowid
+    return {"id": new_id, "ticker": ticker, "name": name, "buy_price": buy_price,
+            "quantity": quantity, "buy_date": buy_date, "memo": memo}
+
+
+@app.put("/api/my-portfolio/{item_id}", summary="내 포트폴리오 종목 수정")
+async def my_portfolio_update(item_id: int, request: Request) -> Dict[str, Any]:
+    body: Dict[str, Any] = await request.json()
+    fields, vals = [], []
+    for col in ("name", "buy_price", "quantity", "buy_date", "memo"):
+        if col in body:
+            fields.append(f"{col}=?")
+            vals.append(body[col])
+    if not fields:
+        raise HTTPException(status_code=400, detail="수정할 필드 없음")
+    vals.append(item_id)
+    with _db_get_connection() as conn:
+        conn.execute(f"UPDATE my_portfolio SET {', '.join(fields)} WHERE id=?", vals)
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, ticker, name, buy_price, quantity, buy_date, memo FROM my_portfolio WHERE id=?",
+            (item_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="항목 없음")
+    return {"id": row[0], "ticker": row[1], "name": row[2], "buy_price": row[3],
+            "quantity": row[4], "buy_date": row[5], "memo": row[6]}
+
+
+@app.delete("/api/my-portfolio/{item_id}", summary="내 포트폴리오 종목 삭제")
+async def my_portfolio_delete(item_id: int) -> Dict[str, Any]:
+    with _db_get_connection() as conn:
+        conn.execute("DELETE FROM my_portfolio WHERE id=?", (item_id,))
+        conn.commit()
+    return {"deleted": item_id}
+
+
+@app.get("/api/my-portfolio/analysis", summary="내 포트폴리오 분석 (요약·섹터·상관관계·이벤트 영향)")
+async def my_portfolio_analysis() -> Dict[str, Any]:
+    """내 포트폴리오 종목 기반 순수 측정/시각화. 추천 없음."""
+    # 1) 종목 목록 로드
+    with _db_get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, ticker, name, buy_price, quantity, buy_date FROM my_portfolio"
+        ).fetchall()
+
+    if not rows:
+        return {"error": "포트폴리오가 비어 있습니다."}
+
+    tickers = [r[1] for r in rows]
+
+    # 2) 최신 종가 + 섹터 조회
+    with _db_get_connection() as conn:
+        latest_date = conn.execute("SELECT MAX(date) FROM prices").fetchone()[0]
+        price_rows = conn.execute(
+            f"SELECT symbol, close FROM prices WHERE date=? AND symbol IN ({','.join('?'*len(tickers))})",
+            [latest_date] + tickers,
+        ).fetchall()
+        sector_rows = conn.execute(
+            f"SELECT symbol, sector FROM stocks WHERE symbol IN ({','.join('?'*len(tickers))})",
+            tickers,
+        ).fetchall()
+
+    close_map   = {r[0]: r[1] for r in price_rows}
+    sector_map  = {r[0]: r[1] for r in sector_rows}
+
+    # 3) 종목별 계산
+    total_invested = 0.0
+    total_value    = 0.0
+    items_out      = []
+    sector_value: Dict[str, float] = {}
+
+    for (pid, ticker, name, buy_price, quantity, buy_date) in rows:
+        invested     = buy_price * quantity
+        cur_price    = close_map.get(ticker) or buy_price
+        cur_value    = cur_price * quantity
+        return_pct   = (cur_price - buy_price) / buy_price * 100 if buy_price > 0 else 0.0
+        pnl          = cur_value - invested
+
+        total_invested += invested
+        total_value    += cur_value
+
+        sector_code = sector_map.get(ticker)
+        sector_3    = str(sector_code)[:3] if sector_code else "기타"
+        sector_name = _sector_name(sector_code) or f"섹터 {sector_3}"
+        sector_value[sector_name] = sector_value.get(sector_name, 0.0) + cur_value
+
+        items_out.append({
+            "id": pid, "ticker": ticker, "name": name,
+            "buy_price": buy_price, "quantity": quantity, "buy_date": buy_date,
+            "current_price": cur_price,
+            "return_pct": round(return_pct, 2),
+            "current_value": round(cur_value, 0),
+            "pnl": round(pnl, 0),
+            "sector": sector_name,
+        })
+
+    total_return_pct = (total_value - total_invested) / total_invested * 100 if total_invested > 0 else 0.0
+
+    # 비중% 후처리
+    for item in items_out:
+        item["weight_pct"] = round(item["current_value"] / total_value * 100, 1) if total_value > 0 else 0.0
+
+    # 4) 섹터 비중
+    sector_weights = [
+        {"sector": s, "value": round(v, 0), "weight_pct": round(v / total_value * 100, 1) if total_value > 0 else 0.0}
+        for s, v in sorted(sector_value.items(), key=lambda x: -x[1])
+    ]
+
+    # 5) 종목 간 상관관계 (paper_trades correlation 로직 재사용)
+    correlation: Dict[str, Any] = {"symbols": [], "names": {}, "matrix": [], "avg_correlation": None}
+    if len(tickers) >= 2:
+        try:
+            with _db_get_connection() as conn:
+                trading_days = sorted({r[0] for r in conn.execute(
+                    "SELECT DISTINCT date FROM market_index ORDER BY date DESC LIMIT 120"
+                ).fetchall()})[-60:]
+                first_day, last_day = trading_days[0], trading_days[-1]
+                price_series: Dict[str, list] = {}
+                for sym in tickers:
+                    price_series[sym] = conn.execute(
+                        "SELECT date, close FROM prices WHERE symbol=? AND date BETWEEN ? AND ? ORDER BY date",
+                        (sym, first_day, last_day),
+                    ).fetchall()
+
+            def _dr(prows: list) -> list:
+                rets = []
+                for i in range(1, len(prows)):
+                    prev, curr = prows[i-1][1], prows[i][1]
+                    rets.append((curr - prev) / prev if prev and prev > 0 else 0.0)
+                return rets
+
+            def _pc(a: list, b: list) -> float:
+                n = min(len(a), len(b))
+                if n < 5:
+                    return float("nan")
+                a, b = a[:n], b[:n]
+                ma, mb = sum(a)/n, sum(b)/n
+                num = sum((a[i]-ma)*(b[i]-mb) for i in range(n))
+                da  = sum((x-ma)**2 for x in a)**0.5
+                db  = sum((x-mb)**2 for x in b)**0.5
+                return round(num/(da*db), 3) if da > 1e-12 and db > 1e-12 else float("nan")
+
+            ret_map = {sym: _dr(price_series[sym]) for sym in tickers}
+            names_map = {r[1]: r[2] for r in rows}
+            n = len(tickers)
+            matrix, off = [], []
+            for i in range(n):
+                row_v = []
+                for j in range(n):
+                    if i == j:
+                        row_v.append(1.0)
+                    else:
+                        r_val = _pc(ret_map[tickers[i]], ret_map[tickers[j]])
+                        row_v.append(r_val)
+                        if j > i and r_val == r_val:
+                            off.append(r_val)
+                matrix.append(row_v)
+            avg_corr = round(sum(off)/len(off), 3) if off else None
+            correlation = {
+                "symbols": tickers,
+                "names": {t: names_map.get(t, t) for t in tickers},
+                "matrix": matrix,
+                "avg_correlation": avg_corr,
+                "trading_days_used": len(trading_days),
+            }
+        except Exception as e:
+            logger.warning("my_portfolio 상관관계 계산 실패: %s", e)
+
+    # 6) 섹터 자금흐름 정합성 (sector_flow 캐시 재사용)
+    sector_flow_alignment: List[Dict[str, Any]] = []
+    sf = _state.sector_flow_cache
+    if sf and sf.get("sectors"):
+        sym_to_sector3 = {
+            sym: str(sector_map.get(sym, "") or "")[:3]
+            for sym in tickers if sector_map.get(sym)
+        }
+        sector3_to_flow = {s["code"]: s for s in sf["sectors"]}
+        for item in items_out:
+            code3 = str(sector_map.get(item["ticker"], "") or "")[:3]
+            flow = sector3_to_flow.get(code3)
+            if not flow:
+                continue
+            c5, c20, c60 = flow.get("combined_5d", 0), flow.get("combined_20d", 0), flow.get("combined_60d", 0)
+            if c5 > 0 and c20 > 0 and c60 > 0:
+                quad = "consistent_inflow"
+            elif c5 < 0 and c20 < 0 and c60 < 0:
+                quad = "consistent_outflow"
+            elif c60 < 0 and c5 > 0:
+                quad = "short_reversal"
+            else:
+                quad = "neutral"
+            sector_flow_alignment.append({
+                "ticker": item["ticker"], "name": item["name"],
+                "sector": item["sector"],
+                "quadrant": quad,
+                "combined_5d": round(c5, 1),
+                "combined_20d": round(c20, 1),
+                "combined_60d": round(c60, 1),
+            })
+
+    # 7) 캘린더 이벤트 영향도 (섹터 코드 기반)
+    _FINANCIAL_PREFIX = ("64", "65", "66")
+    _EXPORT_PREFIX    = ("261", "301", "302", "303", "311")
+    event_impact: Dict[str, Any] = {}
+    total_val_nz = total_value if total_value > 0 else 1.0
+    for evt_type, prefix_tuple in [("bok_rate", _FINANCIAL_PREFIX), ("fomc", _EXPORT_PREFIX)]:
+        affected_val = sum(
+            item["current_value"] for item in items_out
+            if any((sector_map.get(item["ticker"]) or "").startswith(p) for p in prefix_tuple)
+        )
+        event_impact[evt_type] = round(affected_val / total_val_nz * 100, 1)
+
+    return {
+        "date": latest_date,
+        "summary": {
+            "total_invested":   round(total_invested, 0),
+            "total_value":      round(total_value, 0),
+            "total_return_pct": round(total_return_pct, 2),
+            "total_pnl":        round(total_value - total_invested, 0),
+            "stock_count":      len(rows),
+        },
+        "items": items_out,
+        "sector_weights": sector_weights,
+        "correlation": correlation,
+        "sector_flow_alignment": sector_flow_alignment,
+        "event_impact": event_impact,
+    }
 
 
 _dist = BACKEND_ROOT.parent / "dist"

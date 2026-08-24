@@ -24,7 +24,8 @@ import {
   type Prediction60d, type HealthResponse,
   type LivePerformanceResponse, type OpenSummaryResponse, type SectorFlowResponse,
   type WatchlistItem, type SignalLog, type CalendarEvent, type CorrelationResponse,
-  signalsApi, calendarApi, portfolioApi,
+  type MyPortfolioItem, type MyPortfolioAnalysis,
+  signalsApi, calendarApi, portfolioApi, myPortfolioApi,
 } from '../api/aiRecommend'
 import StatusBanner from '../components/StatusBanner'
 import { fmtDate } from '../utils/format'
@@ -2895,6 +2896,398 @@ const CAL_FILTER_GROUPS = [
 
 type FilterGroupKey = typeof CAL_FILTER_GROUPS[number]['key']
 
+// ── 내 포트폴리오 ─────────────────────────────────────────────────────────────
+const QUAD_LABEL: Record<string, string> = {
+  consistent_inflow: '일관 유입 ↑', consistent_outflow: '일관 유출 ↓',
+  short_reversal: '단기 반전', neutral: '중립',
+}
+const QUAD_COLOR: Record<string, string> = {
+  consistent_inflow: 'text-emerald-400', consistent_outflow: 'text-rose-400',
+  short_reversal: 'text-yellow-400', neutral: 'text-gray-400',
+}
+const EVENT_LABELS: Record<string, string> = { bok_rate: '금통위', fomc: 'FOMC' }
+
+function MyPortfolioSection() {
+  const [items, setItems] = useState<MyPortfolioItem[]>([])
+  const [analysis, setAnalysis] = useState<MyPortfolioAnalysis | null>(null)
+  const [open, setOpen] = useState(false)
+  const [analysisOpen, setAnalysisOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editId, setEditId] = useState<number | null>(null)
+
+  // 추가/편집 폼 상태
+  const [formTicker, setFormTicker] = useState('')
+  const [formName, setFormName] = useState('')
+  const [formBuyPrice, setFormBuyPrice] = useState('')
+  const [formQuantity, setFormQuantity] = useState('')
+  const [formBuyDate, setFormBuyDate] = useState('')
+  const [formMemo, setFormMemo] = useState('')
+  const [formOpen, setFormOpen] = useState(false)
+  const [searchResults, setSearchResults] = useState<{ symbol: string; name: string }[]>([])
+  const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const fetchItems = () => myPortfolioApi.list().then(setItems).catch(() => {})
+
+  useEffect(() => { fetchItems() }, [])
+
+  const resetForm = () => {
+    setFormTicker(''); setFormName(''); setFormBuyPrice('')
+    setFormQuantity(''); setFormBuyDate(''); setFormMemo('')
+    setEditId(null); setSearchResults([])
+  }
+
+  const openAddForm = () => { resetForm(); setFormOpen(true) }
+
+  const openEditForm = (item: MyPortfolioItem) => {
+    setEditId(item.id)
+    setFormTicker(item.ticker); setFormName(item.name)
+    setFormBuyPrice(String(item.buy_price)); setFormQuantity(String(item.quantity))
+    setFormBuyDate(item.buy_date); setFormMemo(item.memo ?? '')
+    setFormOpen(true)
+  }
+
+  const handleTickerSearch = (q: string) => {
+    setFormTicker(q); setFormName('')
+    if (searchRef.current) clearTimeout(searchRef.current)
+    if (q.length < 1) { setSearchResults([]); return }
+    searchRef.current = setTimeout(async () => {
+      try {
+        const res = await screenerApi.stocksSearch(q)
+        setSearchResults((res as unknown as Array<{ symbol: string; name: string }>).slice(0, 6))
+      } catch { setSearchResults([]) }
+    }, 300)
+  }
+
+  const handleSelectSearchResult = (r: { symbol: string; name: string }) => {
+    setFormTicker(r.symbol); setFormName(r.name); setSearchResults([])
+  }
+
+  const handleSave = async () => {
+    if (!formTicker || !formBuyPrice || !formQuantity) return
+    setSaving(true)
+    try {
+      const body = {
+        ticker: formTicker, name: formName || formTicker,
+        buy_price: parseFloat(formBuyPrice), quantity: parseFloat(formQuantity),
+        buy_date: formBuyDate, memo: formMemo || null,
+      }
+      if (editId !== null) {
+        await myPortfolioApi.update(editId, body)
+      } else {
+        await myPortfolioApi.add(body)
+      }
+      await fetchItems()
+      setFormOpen(false); resetForm()
+    } catch { } finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('종목을 삭제할까요?')) return
+    await myPortfolioApi.remove(id).catch(() => {})
+    await fetchItems()
+  }
+
+  const handleAnalysis = async () => {
+    setLoading(true)
+    try {
+      const res = await myPortfolioApi.analysis()
+      setAnalysis(res); setAnalysisOpen(true)
+    } catch { } finally { setLoading(false) }
+  }
+
+  // 섹터 파이차트 (SVG, 인라인)
+  const SectorPieChart = ({ weights }: { weights: MyPortfolioAnalysis['sector_weights'] }) => {
+    if (!weights.length) return null
+    const total = weights.reduce((s, w) => s + w.value, 0)
+    const COLORS = ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#ec4899','#84cc16']
+    let angle = -90
+    const slices = weights.map((w, i) => {
+      const pct = w.value / total
+      const a1 = angle, a2 = angle + pct * 360
+      angle = a2
+      const r = 60, cx = 80, cy = 80
+      const toRad = (d: number) => d * Math.PI / 180
+      const x1 = cx + r * Math.cos(toRad(a1)), y1 = cy + r * Math.sin(toRad(a1))
+      const x2 = cx + r * Math.cos(toRad(a2)), y2 = cy + r * Math.sin(toRad(a2))
+      const largeArc = pct > 0.5 ? 1 : 0
+      return { d: `M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${largeArc},1 ${x2},${y2} Z`, color: COLORS[i % COLORS.length], w }
+    })
+    return (
+      <div className="flex items-center gap-4 flex-wrap">
+        <svg width="160" height="160" viewBox="0 0 160 160">
+          {slices.map((s, i) => <path key={i} d={s.d} fill={s.color} stroke="#0f172a" strokeWidth="1.5" />)}
+        </svg>
+        <div className="flex flex-col gap-1 text-xs">
+          {slices.map((s, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: s.color }} />
+              <span className="text-gray-300 truncate max-w-[120px]">{s.w.sector}</span>
+              <span className="text-gray-500">{s.w.weight_pct}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  const totalCount = items.length
+
+  return (
+    <div className="bg-gray-900/60 border border-gray-800 rounded-xl overflow-hidden">
+      {/* 헤더 */}
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-800/40 transition-colors"
+      >
+        <div className="flex items-center gap-2 text-sm font-medium text-gray-200">
+          <span>💼</span>
+          <span>내 포트폴리오</span>
+          {totalCount > 0 && (
+            <span className="text-xs text-gray-500 font-normal ml-1">{totalCount}종목</span>
+          )}
+        </div>
+        <svg className={`w-4 h-4 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 space-y-3 border-t border-gray-800/60">
+          {/* 액션 버튼 */}
+          <div className="flex gap-2 pt-3">
+            <button
+              onClick={openAddForm}
+              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30 transition-colors"
+            >
+              + 종목 추가
+            </button>
+            {items.length >= 1 && (
+              <button
+                onClick={handleAnalysis}
+                disabled={loading}
+                className="text-xs px-3 py-1.5 rounded-lg bg-sky-600/20 border border-sky-500/30 text-sky-400 hover:bg-sky-600/30 transition-colors disabled:opacity-50"
+              >
+                {loading ? '분석 중...' : '📊 분석 실행'}
+              </button>
+            )}
+          </div>
+
+          {/* 인라인 추가/편집 폼 */}
+          {formOpen && (
+            <div className="bg-gray-800/60 rounded-lg p-3 space-y-2 text-xs border border-gray-700/50">
+              <div className="font-medium text-gray-300">{editId !== null ? '종목 수정' : '종목 추가'}</div>
+              <div className="relative">
+                <input
+                  className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 placeholder-gray-600"
+                  placeholder="종목코드 또는 이름 검색"
+                  value={formTicker}
+                  onChange={e => handleTickerSearch(e.target.value)}
+                  disabled={editId !== null}
+                />
+                {searchResults.length > 0 && (
+                  <div className="absolute z-20 w-full mt-1 bg-gray-900 border border-gray-700 rounded-lg shadow-xl max-h-40 overflow-y-auto">
+                    {searchResults.map(r => (
+                      <button
+                        key={r.symbol}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-800 transition-colors"
+                        onClick={() => handleSelectSearchResult(r)}
+                      >
+                        <span className="text-gray-400 font-mono">{r.symbol}</span>
+                        <span className="text-gray-300 truncate">{r.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {formName && <div className="text-gray-400 pl-1">{formName}</div>}
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  className="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 placeholder-gray-600"
+                  placeholder="매수가 (원)"
+                  type="number"
+                  value={formBuyPrice}
+                  onChange={e => setFormBuyPrice(e.target.value)}
+                />
+                <input
+                  className="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 placeholder-gray-600"
+                  placeholder="수량"
+                  type="number"
+                  value={formQuantity}
+                  onChange={e => setFormQuantity(e.target.value)}
+                />
+              </div>
+              <input
+                className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 placeholder-gray-600"
+                placeholder="매수일 (YYYY-MM-DD)"
+                value={formBuyDate}
+                onChange={e => setFormBuyDate(e.target.value)}
+              />
+              <input
+                className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 placeholder-gray-600"
+                placeholder="메모 (선택)"
+                value={formMemo}
+                onChange={e => setFormMemo(e.target.value)}
+              />
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !formTicker || !formBuyPrice || !formQuantity}
+                  className="px-3 py-1.5 rounded bg-emerald-600 text-white disabled:opacity-40 hover:bg-emerald-500 transition-colors"
+                >
+                  {saving ? '저장 중...' : '저장'}
+                </button>
+                <button onClick={() => { setFormOpen(false); resetForm() }} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                  취소
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 종목 목록 */}
+          {items.length === 0 ? (
+            <p className="text-xs text-gray-600 py-2">추가된 종목이 없습니다.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="text-gray-500 border-b border-gray-800">
+                    <th className="pb-1 pr-3">종목</th>
+                    <th className="pb-1 pr-3 text-right">매수가</th>
+                    <th className="pb-1 pr-3 text-right">수량</th>
+                    <th className="pb-1 pr-3">매수일</th>
+                    <th className="pb-1" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map(item => (
+                    <tr key={item.id} className="border-b border-gray-800/40 hover:bg-gray-800/20">
+                      <td className="py-1.5 pr-3">
+                        <div className="font-medium text-gray-200">{item.name}</div>
+                        <div className="text-gray-500 font-mono">{item.ticker}</div>
+                      </td>
+                      <td className="py-1.5 pr-3 text-right text-gray-300">{item.buy_price.toLocaleString()}</td>
+                      <td className="py-1.5 pr-3 text-right text-gray-300">{item.quantity}</td>
+                      <td className="py-1.5 pr-3 text-gray-500">{item.buy_date}</td>
+                      <td className="py-1.5 flex gap-1.5">
+                        <button onClick={() => openEditForm(item)} className="text-gray-500 hover:text-sky-400 transition-colors">✏</button>
+                        <button onClick={() => handleDelete(item.id)} className="text-gray-500 hover:text-rose-400 transition-colors">✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* 분석 결과 */}
+          {analysisOpen && analysis && !analysis.error && (
+            <div className="space-y-4 pt-2">
+              {/* 요약 */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { label: '총 투자금', value: `${(analysis.summary.total_invested / 10000).toFixed(0)}만원` },
+                  { label: '현재 평가금', value: `${(analysis.summary.total_value / 10000).toFixed(0)}만원` },
+                  { label: '총 수익률', value: `${analysis.summary.total_return_pct >= 0 ? '+' : ''}${analysis.summary.total_return_pct.toFixed(2)}%`, color: analysis.summary.total_return_pct >= 0 ? 'text-emerald-400' : 'text-rose-400' },
+                  { label: '총 손익', value: `${analysis.summary.total_pnl >= 0 ? '+' : ''}${(analysis.summary.total_pnl / 10000).toFixed(0)}만원`, color: analysis.summary.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400' },
+                ].map(c => (
+                  <div key={c.label} className="bg-gray-800/60 rounded-lg px-3 py-2 text-center">
+                    <div className="text-xs text-gray-500 mb-0.5">{c.label}</div>
+                    <div className={`text-sm font-medium ${c.color ?? 'text-gray-200'}`}>{c.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 종목별 테이블 */}
+              <div>
+                <div className="text-xs font-medium text-gray-400 mb-2">종목별 현황</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-gray-500 border-b border-gray-800">
+                        <th className="pb-1 pr-2 text-left">종목</th>
+                        <th className="pb-1 pr-2 text-right">매수가</th>
+                        <th className="pb-1 pr-2 text-right">현재가</th>
+                        <th className="pb-1 pr-2 text-right">수익률</th>
+                        <th className="pb-1 pr-2 text-right">평가금</th>
+                        <th className="pb-1 text-right">비중</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.items.map(item => (
+                        <tr key={item.id} className="border-b border-gray-800/40">
+                          <td className="py-1.5 pr-2">
+                            <div className="text-gray-200">{item.name}</div>
+                            <div className="text-gray-600 font-mono">{item.ticker}</div>
+                          </td>
+                          <td className="py-1.5 pr-2 text-right text-gray-400">{item.buy_price.toLocaleString()}</td>
+                          <td className="py-1.5 pr-2 text-right text-gray-300">{item.current_price.toLocaleString()}</td>
+                          <td className={`py-1.5 pr-2 text-right font-medium ${item.return_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {item.return_pct >= 0 ? '+' : ''}{item.return_pct.toFixed(2)}%
+                          </td>
+                          <td className="py-1.5 pr-2 text-right text-gray-300">{(item.current_value / 10000).toFixed(0)}만</td>
+                          <td className="py-1.5 text-right text-gray-400">{item.weight_pct}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 섹터 비중 파이차트 */}
+              {analysis.sector_weights.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-gray-400 mb-2">섹터 비중</div>
+                  <SectorPieChart weights={analysis.sector_weights} />
+                </div>
+              )}
+
+              {/* 섹터 자금흐름 정합성 */}
+              {analysis.sector_flow_alignment.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-gray-400 mb-2">섹터 자금흐름 정합성</div>
+                  <div className="space-y-1">
+                    {analysis.sector_flow_alignment.map(f => (
+                      <div key={f.ticker} className="flex items-center justify-between text-xs py-1 border-b border-gray-800/40">
+                        <div>
+                          <span className="text-gray-200">{f.name}</span>
+                          <span className="text-gray-600 ml-1 font-mono">{f.ticker}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-gray-600">{f.sector}</span>
+                          <span className={`font-medium ${QUAD_COLOR[f.quadrant] ?? 'text-gray-400'}`}>
+                            {QUAD_LABEL[f.quadrant] ?? f.quadrant}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 이벤트 영향도 */}
+              {Object.keys(analysis.event_impact).length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-gray-400 mb-2">이벤트 영향도 (포트폴리오 비중 기준)</div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(analysis.event_impact).map(([evt, pct]) => (
+                      <div key={evt} className="bg-gray-800/60 rounded-lg px-3 py-1.5 text-xs">
+                        <span className="text-gray-400">{EVENT_LABELS[evt] ?? evt}</span>
+                        <span className="text-gray-200 ml-2 font-medium">{pct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-gray-600 mt-1">* 섹터 분류 기반 추정. 개별 종목 실제 민감도와 다를 수 있음.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── 포트폴리오 상관관계 히트맵 ──────────────────────────────────────────────
 function CorrelationSection({ onSelect }: { onSelect?: (symbol: string) => void }) {
   const [data, setData] = useState<CorrelationResponse | null>(null)
@@ -3262,6 +3655,23 @@ function CalendarSection({ onSelect }: { onSelect?: (symbol: string) => void }) 
                         {desc}
                       </div>
                     )}
+                    {/* 관련 종목 칩 */}
+                    {isExpanded && ev.related_stocks && ev.related_stocks.length > 0 && (
+                      <div className="px-2.5 pb-2 pt-1 border-t border-current/20">
+                        <div className="text-[10px] opacity-60 mb-1">관련 종목</div>
+                        <div className="flex flex-wrap gap-1">
+                          {ev.related_stocks.map(s => (
+                            <button
+                              key={s.symbol}
+                              onClick={() => onSelect?.(s.symbol)}
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-current/10 hover:bg-current/20 transition-colors font-medium"
+                            >
+                              {s.name || s.symbol}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -3517,6 +3927,9 @@ export default function AIRecommendPage({ embedded = false, onPresetSelect: _onP
 
             {/* 60d 오픈 포지션 */}
             <Open60dSection onClickSymbol={openModalForSymbol} />
+
+            {/* 내 포트폴리오 */}
+            <MyPortfolioSection />
 
             {/* 섹터 자금 흐름 */}
             <SectorFlowCard />

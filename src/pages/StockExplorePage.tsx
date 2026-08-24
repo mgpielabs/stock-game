@@ -161,9 +161,13 @@ export default function StockExplorePage() {
   }, [updateDoneTick])
 
   // 프로파일 카드가 열릴 때 해당 영역으로 스크롤
+  // scrollIntoView(block:'start')는 탭 바 + 시장국면 배너에 종목명이 가려지므로
+  // getBoundingClientRect()로 절대 위치를 계산한 뒤 96px 여백을 확보해 scrollTo.
   useEffect(() => {
     if ((profile || profileLoading) && profileCardRef.current) {
-      profileCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      const el = profileCardRef.current
+      const y = el.getBoundingClientRect().top + window.scrollY - 120
+      window.scrollTo({ top: y, behavior: 'smooth' })
     }
   }, [profile, profileLoading])
 
