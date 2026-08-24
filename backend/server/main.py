@@ -205,6 +205,9 @@ class _State:
     predictions_60d_date: Optional[str] = None
     # 배당 분할/병합 보정계수 인메모리 캐시 (CSV 재읽기 방지 — 재학습/서버재시작 시만 갱신)
     split_correction_factors: Optional[Dict] = None
+    # 매크로 지표 캐시 (macro_indicators 테이블 — 시각화 전용)
+    macro_summary_cache: Optional[Dict[str, Any]] = None
+    macro_summary_date: Optional[str] = None
 
 _state = _State()
 
@@ -4699,6 +4702,81 @@ async def my_portfolio_analysis() -> Dict[str, Any]:
         "sector_flow_alignment": sector_flow_alignment,
         "event_impact": event_impact,
     }
+
+
+# ─── 매크로 지표 API ──────────────────────────────────────────────────────────
+
+def _get_macro_summary_cached(today: str) -> Dict[str, Any]:
+    if _state.macro_summary_cache and _state.macro_summary_date == today:
+        return _state.macro_summary_cache
+
+    INDICATOR_LABELS = {
+        "usd_krw":   "USD/KRW",
+        "jpy_krw":   "JPY/KRW",
+        "vix":       "VIX",
+        "us10y":     "미국 10Y 금리",
+        "wti":       "WTI 원유",
+        "kospi":     "KOSPI",
+        "kosdaq":    "KOSDAQ",
+        "foreign_net": "외국인 순매수",
+        "inst_net":  "기관 순매수",
+    }
+
+    result: Dict[str, Any] = {}
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            for indicator, label in INDICATOR_LABELS.items():
+                rows = conn.execute(
+                    "SELECT date, value FROM macro_indicators WHERE indicator=? ORDER BY date DESC LIMIT 2",
+                    (indicator,)
+                ).fetchall()
+                if not rows:
+                    continue
+                latest_date, latest_val = rows[0]
+                change = None
+                change_pct = None
+                if len(rows) >= 2:
+                    prev_val = rows[1][1]
+                    if prev_val and prev_val != 0:
+                        change = round(latest_val - prev_val, 4)
+                        change_pct = round((latest_val - prev_val) / abs(prev_val) * 100, 2)
+                result[indicator] = {
+                    "label": label,
+                    "value": round(latest_val, 4),
+                    "date": latest_date,
+                    "change": change,
+                    "change_pct": change_pct,
+                }
+    except Exception as exc:
+        logger.exception("매크로 summary 오류: %s", exc)
+
+    _state.macro_summary_cache = result
+    _state.macro_summary_date = today
+    return result
+
+
+@app.get("/api/macro/summary", summary="매크로 지표 최신값 요약")
+async def macro_summary() -> Dict[str, Any]:
+    today = datetime.now().strftime("%Y%m%d")
+    return _get_macro_summary_cached(today)
+
+
+@app.get("/api/macro/series", summary="매크로 지표 시계열 (indicator별)")
+async def macro_series(
+    indicator: str,
+    days: int = 90,
+) -> Dict[str, Any]:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT date, value FROM macro_indicators WHERE indicator=? ORDER BY date DESC LIMIT ?",
+                (indicator, days)
+            ).fetchall()
+        data = [{"date": r[0], "value": round(r[1], 4)} for r in reversed(rows)]
+        return {"indicator": indicator, "data": data}
+    except Exception as exc:
+        logger.exception("매크로 series 오류: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 _dist = BACKEND_ROOT.parent / "dist"

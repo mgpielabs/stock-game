@@ -75,7 +75,7 @@ def _write_pipeline_status(stage: int, stage_name: str, status: str = "running")
             "started_at":         _pl_started_at,
             "current_stage":      stage,
             "current_stage_name": stage_name,
-            "total_stages":       12,
+            "total_stages":       13,
             "last_heartbeat":     time.time(),
             "status":             status,
         }, ensure_ascii=False)
@@ -102,7 +102,7 @@ def _write_skip_status(reason: str) -> None:
             "started_at":         now,
             "current_stage":      0,
             "current_stage_name": "",
-            "total_stages":       12,
+            "total_stages":       13,
             "last_heartbeat":     now,
             "status":             "skipped",
             "reason":             reason,
@@ -576,6 +576,13 @@ def main() -> None:
         run_optional(
             ["detect_signals.py"],
             cwd=SCRIPTS_DIR, label="시그널감지", dry_run=args.dry_run,
+        )
+
+        # 13. 매크로 지표 수집 (환율/금리/변동성/원자재 — yfinance + 내부 DB 집계)
+        _sep("13단계: 매크로 지표 수집")
+        run_optional(
+            ["macro_collector.py"],
+            cwd=DATA_DIR, label="매크로지표수집", dry_run=args.dry_run,
         )
 
         _pl_finished_ok = True

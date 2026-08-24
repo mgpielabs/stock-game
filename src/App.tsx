@@ -74,6 +74,7 @@ export default function App() {
         <Route path="/recommend" element={<StockExplorePage />} />
         <Route path="/screener" element={<StockExplorePage />} />
         <Route path="/ai-recommend" element={<StockExplorePage />} />
+        <Route path="/macro" element={<StockExplorePage />} />
         <Route path="/paper-trading" element={<PaperTradingPage />} />
         <Route path="/help" element={<HelpPage />} />
         <Route path="/chart" element={<StockChartPage />} />

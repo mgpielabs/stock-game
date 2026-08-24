@@ -10,20 +10,25 @@ import StatusBanner from '../components/StatusBanner'
 import { DataUpdateBanner, RegimeBanner, StockSearchBox, StockProfileCard, CompareFloatingBar, StockCompareView } from './ScreenerPage'
 import AIRecommendPage from './AIRecommendPage'
 import ScreenerPage from './ScreenerPage'
+import MacroDashboard from './MacroDashboard'
 
 export default function StockExplorePage() {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
-  const activeTab = location.pathname === '/screener' ? 'screener' : 'recommend'
+  const activeTab = location.pathname === '/screener' ? 'screener'
+    : location.pathname === '/macro' ? 'macro'
+    : 'recommend'
 
   // 탭별 lazy mount — 첫 방문 시 마운트, 이후 hidden으로 유지 (상태 보존)
   const [aiMounted, setAiMounted] = useState(activeTab === 'recommend')
   const [screenerMounted, setScreenerMounted] = useState(activeTab === 'screener')
+  const [macroMounted, setMacroMounted] = useState(activeTab === 'macro')
   useEffect(() => {
     if (activeTab === 'recommend') setAiMounted(true)
-    else setScreenerMounted(true)
+    else if (activeTab === 'screener') setScreenerMounted(true)
+    else if (activeTab === 'macro') setMacroMounted(true)
   }, [activeTab])
 
   // 공통 상태
@@ -249,6 +254,16 @@ export default function StockExplorePage() {
             >
               스크리너
             </Link>
+            <Link
+              to="/macro"
+              className={`text-xs px-3 py-1 rounded-md font-medium transition-colors ${
+                activeTab === 'macro'
+                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              매크로
+            </Link>
           </div>
 
           {/* 프로파일 열림 시 위치 표시 */}
@@ -334,6 +349,11 @@ export default function StockExplorePage() {
             watchlist={watchlistSymbols}
             onToggleWatchlist={handleToggleWatchlist}
           />
+        </div>
+      )}
+      {macroMounted && (
+        <div className={activeTab !== 'macro' ? 'hidden' : ''}>
+          <MacroDashboard />
         </div>
       )}
       {/* 비교 플로팅 바 */}

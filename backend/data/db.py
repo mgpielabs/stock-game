@@ -235,6 +235,15 @@ CREATE INDEX IF NOT EXISTS idx_itk_symbol         ON investor_trading_kis       
 CREATE INDEX IF NOT EXISTS idx_itkd_symbol        ON investor_trading_kis_detail (symbol);
 CREATE INDEX IF NOT EXISTS idx_ibp_status         ON investor_backfill_progress  (status);
 
+-- 매크로 지표 (yfinance 외부 + DB 내부 집계, 시각화 전용)
+CREATE TABLE IF NOT EXISTS macro_indicators (
+    date      TEXT NOT NULL,
+    indicator TEXT NOT NULL,
+    value     REAL,
+    PRIMARY KEY (date, indicator)
+);
+CREATE INDEX IF NOT EXISTS idx_macro_date ON macro_indicators (date DESC);
+
 -- 예측 이력 (append-only, 수정 금지 — 라이브 성과 추적 기반)
 -- score = raw 확률(calibrated 아님), 모델 랭킹과 동일 기준
 CREATE TABLE IF NOT EXISTS prediction_log (
