@@ -2783,6 +2783,58 @@ CREATE TABLE prediction_outcomes (
     - **다음 정기 재학습(10월) 때** 마스킹 적용된 features로 자연스럽게 교체됨.
     - **회귀 테스트**: `backend/tests/test_screener_return_calc.py` 8개 추가 (42 passed).
 
+## 세션 요약 (2026-08-24) — 내 포트폴리오 기능 추가 + n=130 쿨다운 재확인
+
+### 내 포트폴리오 기능 신설
+
+AI 추천 페이지 대시보드 탭 안에 "내 포트폴리오" 섹션 추가 — 실제 보유 종목을 직접 입력해
+수익률을 추적하는 개인 메모/추적 기능 (AI 추천/모의투자와 독립).
+
+- **`backend/data/db.py`**: `my_portfolio` 테이블 DDL 추가 (id/ticker/name/buy_price/quantity/buy_date/memo/created_at)
+- **`backend/server/main.py`**: `/api/my-portfolio` CRUD 엔드포인트 신설
+  - `GET /api/my-portfolio` — 목록 조회
+  - `POST /api/my-portfolio` — 종목 추가
+  - `PUT /api/my-portfolio/{id}` — 수정
+  - `DELETE /api/my-portfolio/{id}` — 삭제
+  - `GET /api/my-portfolio/analysis` — 종목별 수익률 분석 (현재가 실시간 조회 포함)
+  - **버그 수정**: FastAPI `Dict[str, Any]` 바디 파싱 오류 → `Request.json()` 방식으로 교체 (`Request` 임포트 추가)
+- **`src/api/aiRecommend.ts`**: `MyPortfolioItem`/`MyPortfolioAnalysis` 인터페이스 + `myPortfolioApi` 클라이언트 추가
+  - **버그 수정**: `add`/`update`/`remove`가 `apiFetch`(1인자 전용) 호출 → `apiFetchWithOptions` (POST/PUT/DELETE 지원)로 수정 (TypeScript 빌드 오류 해결)
+- **`src/pages/AIRecommendPage.tsx`**: `MyPortfolioSection` 컴포넌트 추가
+  - CRUD UI (추가 폼 + 편집/삭제 버튼)
+  - 종목별 수익률 배지(색상), 전체 평균 수익률/총평가금액 요약
+  - 대시보드 탭 내 60d 포지션 섹션 하단 배치
+
+### 스크롤 버그 수정
+
+`src/pages/StockExplorePage.tsx`: 프로파일 카드 클릭 시 스크롤 위치 수정
+- 기존 `scrollIntoView(block:'start')` → 탭 바 + 시장국면 배너에 종목명이 가려지던 문제
+- `getBoundingClientRect()` + `window.scrollY - 120px` 여백 확보 방식으로 교체
+
+### n=130 쿨다운/concentration_filter 재확인 (2026-08-24)
+
+**배경**: 7/28 prediction_logger.py에 concentration_filter(쿨다운 5일) 통합 이후 P@10 측정이
+"실제 API 추천 기준"으로 통일됨. n=80(8/15) 시 역선택(-5.0%p) 확인됐으나 절대성과 양호로
+즉시 변경 보류 → n=130 도달(8/24) 재확인.
+
+**결과 (settled n=120, 7/28~8/13 12거래일)**:
+
+| 항목 | n=80 (8/15) | n=130 (8/24) | 변화 |
+|---|---|---|---|
+| filtered P@10 | 53.8% | **46.7%** | -7.1%p |
+| raw P@10 | 58.8% | **48.8%** | -10.5%p |
+| 차이 (filtered-raw) | -5.0%p | **-1.6%p** | 역선택 완화 |
+| raw rank 11-20 | 63.8% | **42.5%** | -21.3%p |
+
+- **7/30 outlier 제외 시**: filtered 42.7%, raw 45.5%, diff=-2.8%p
+- **날짜 추이**: 7/28~8/4 고성과(60~90%) → 8/5~8/11 급락(20~40%) → 8/12~ 부분회복
+- **n=80 때 rank 11-20 > rank 1-10이던 역전 현상**: n=130에서 해소 (rank 1-10이 48.3%, rank 11-20이 42.5%로 정상화) — n=80이 소표본 노이즈였을 가능성
+
+**판정 (사전 고정 기준)**:
+- filtered-raw ≥ -3%p 기준: -1.6%p — 역선택 지속 조건 미충족 ✅
+- filtered 25% 미만 즉시 제거: 46.7% >> 25% — 미충족 ✅
+- **→ 10월 재학습 때 n=200+ 최종 판정 예정 (현행 유지)**
+
 ## 참고
 
 - 모의투자 "누적 수익률"은 `total_return_pct`(단순 SUM, 의미 없는 값) 대신 `/api/paper/performance-timeline`의 `cumulative_return_pct`(배치별 평균의 누적합)를 사용해야 함.
