@@ -985,6 +985,39 @@ export function StockProfileCard({
         </div>
       )}
 
+      {/* 투자 가능 상한 */}
+      {(() => {
+        const vol = s.vol_krw_20d
+        if (vol == null) return null
+        const conservative = vol * 0.05
+        const aggressive = vol * 0.1
+        const fmt = (v: number) => {
+          if (v >= 1_0000_0000) return `${(v / 1_0000_0000).toFixed(0)}억원`
+          if (v >= 1000_0000) return `${(v / 1000_0000).toFixed(0)}천만원`
+          return `${(v / 10000).toFixed(0)}만원`
+        }
+        const isLow = conservative < 5000_0000
+        return (
+          <div
+            className={`rounded-lg px-3 py-2.5 space-y-1.5 ${isLow ? 'bg-red-900/20 border border-red-700/30' : 'bg-gray-800/40'}`}
+            title="일평균 거래대금의 5~10%를 기준으로 산출. 이 금액을 초과하면 호가를 밀어올려 실제 매수 비용이 증가할 수 있습니다."
+          >
+            <div className="flex items-center gap-2">
+              <p className="text-gray-500 text-xs font-medium">투자 상한 (시장충격 기준)</p>
+              <span className="text-gray-600 text-[10px] cursor-help" title="일평균 거래대금의 5~10%를 기준으로 산출. 이 금액을 초과하면 호가를 밀어올려 실제 매수 비용이 증가할 수 있습니다.">ⓘ</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="text-xs text-gray-500">일평균 거래대금 <span className="text-gray-300 font-medium">{fmt(vol)}</span></span>
+              <span className="text-xs text-gray-500">보수적 <span className="text-amber-300 font-semibold">{fmt(conservative)}</span></span>
+              <span className="text-xs text-gray-500">적극적 <span className="text-emerald-400 font-semibold">{fmt(aggressive)}</span></span>
+            </div>
+            {isLow && (
+              <p className="text-xs text-red-400">⚠️ 유동성 부족 — 대량 매매 시 슬리피지 주의</p>
+            )}
+          </div>
+        )
+      })()}
+
       {/* 필터 통과 배지 */}
       <div>
         <p className="text-gray-500 text-xs font-medium mb-2">해당 필터</p>
