@@ -93,14 +93,14 @@ export default function StockChartPage() {
 
       {/* ── 차트 영역 — 남은 공간 전부 ── */}
       <div className="flex-1 min-h-0 p-2">
-        <div className="h-full bg-gray-900 rounded-xl border border-gray-800 flex flex-col overflow-hidden p-2">
+        <div className="h-full bg-gray-900 rounded-xl border border-gray-800 flex flex-col p-2">
           <StockInvestorChart
             key={symbol}
             symbol={symbol}
             name={s?.name}
             onDataLoaded={setChartData}
             flex
-            investHeight={200}
+            investHeight={240}
           />
         </div>
       </div>

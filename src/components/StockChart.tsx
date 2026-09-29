@@ -107,6 +107,7 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
   const [showRsi, setShowRsi] = useState(false)
   const [rsiValue, setRsiValue] = useState<number | null>(null)
   const [tf, setTf] = useState<TF>('D')
+  const [dataRange, setDataRange] = useState<'1y' | '3y' | '5y' | '전체'>('3y')
   const allBarsRef = useRef<CandleBar[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -422,17 +423,19 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tf])
 
-  // 내부 fetch 모드 (실시간) — 항상 2년치 데이터 fetch
+  // 내부 fetch 모드 (실시간)
   useEffect(() => {
     if (externalCandles !== undefined) return
     if (!chartRef.current) return
     let cancelled = false
 
+    const rangeParam = dataRange === '전체' ? '5y' : dataRange
+
     const load = async () => {
       setLoading(true)
       setError(null)
       try {
-        const bars: CandleBar[] = await fetchCandles(symbol, '3y')
+        const bars: CandleBar[] = await fetchCandles(symbol, rangeParam)
         if (cancelled) return
         initialFitDoneRef.current = false
         applyBars(bars)
@@ -447,7 +450,7 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
     load()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, externalCandles])
+  }, [symbol, externalCandles, dataRange])
 
   return (
     <div className={isFullscreen
@@ -491,6 +494,23 @@ export default function StockChart({ symbol, candles: externalCandles, cutoffDat
           )}
         </div>
         <div className="flex items-center gap-2">
+          {!hideControls && externalCandles === undefined && (
+            <div className="flex gap-1 border-r border-gray-700 pr-2">
+              {(['1y', '3y', '5y', '전체'] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setDataRange(r)}
+                  className={`px-2 py-1 text-xs rounded-lg transition-colors ${
+                    dataRange === r
+                      ? 'bg-emerald-700 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex gap-1">
             {TF_OPTS.map((t) => (
               <button

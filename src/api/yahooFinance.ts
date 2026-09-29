@@ -113,11 +113,12 @@ const RANGE_DAYS: Record<string, number> = {
   '1y': 365,
   '2y': 730,
   '3y': 1095,
+  '5y': 1825,
 }
 
 export async function fetchCandles(
   symbol: string,
-  range: '1mo' | '3mo' | '6mo' | '1y' | '2y' | '3y' = '3mo',
+  range: '1mo' | '3mo' | '6mo' | '1y' | '2y' | '3y' | '5y' = '3mo',
 ): Promise<CandleBar[]> {
   const code = toCode(symbol)
   const days = RANGE_DAYS[range] ?? 90
@@ -153,7 +154,7 @@ const _candleCache = new Map<string, CandleBar[]>()
 
 export async function fetchCandlesCached(
   symbol: string,
-  range: '1mo' | '3mo' | '6mo' | '1y' | '2y' | '3y' = '1y',
+  range: '1mo' | '3mo' | '6mo' | '1y' | '2y' | '3y' | '5y' = '1y',
 ): Promise<CandleBar[]> {
   const key = `${symbol}-${range}`
   if (_candleCache.has(key)) return _candleCache.get(key)!

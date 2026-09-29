@@ -375,40 +375,77 @@ function _buildCharts(
     })
   )
 
-  // ── 투자자 수급 차트 ──
+  // ── 투자자 수급 차트 (외국인/기관/개인 단일 패널, 각자 독립 Y축) ──
   let investChart: IChartApi | null = null
   if (hasInvestor && investEl) {
+    // 시리즈별 p2/p98 클램핑 — 스파이크 방지
+    const clampRange = (vals: (number | null | undefined)[]) => {
+      const nums = vals.filter((v): v is number => v != null)
+      if (!nums.length) return { minValue: -1, maxValue: 1 }
+      const s = [...nums].sort((a, b) => a - b)
+      const pAt = (p: number) => s[Math.max(0, Math.min(s.length - 1, Math.floor(p * s.length)))]
+      const lo = pAt(0.02), hi = pAt(0.98)
+      const pad = Math.max(Math.abs(hi - lo) * 0.15, 1)
+      const sym = Math.max(Math.abs(lo - pad), Math.abs(hi + pad))
+      return { minValue: -sym, maxValue: sym }
+    }
+    const frgnRange  = clampRange(data.map(d => d.foreign_net))
+    const instRange  = clampRange(data.map(d => d.inst_net))
+    const indivRange = clampRange(data.map(d => d.indiv_net))
+
     investChart = createChart(investEl, {
       ...baseOpts,
-      rightPriceScale: { borderColor: gridColor, scaleMargins: { top: 0.05, bottom: 0.05 } },
+      rightPriceScale: { visible: false },
+      leftPriceScale:  { visible: false },
+      crosshair: { mode: 1 },
     })
 
+    // 외국인 — 히스토그램, 독립 Y축
     const foreignSeries = investChart.addSeries(HistogramSeries, {
-      color: LW_COLORS.foreign + 'cc', priceLineVisible: false, lastValueVisible: false,
+      priceScaleId: 'frgn',
+      color: LW_COLORS.foreign + 'bb', priceLineVisible: false, lastValueVisible: false,
+      autoscaleInfoProvider: () => ({ priceRange: frgnRange, margins: { above: 0.05, below: 0.05 } }),
     })
+    investChart.priceScale('frgn').applyOptions({ visible: false })
     foreignSeries.setData(
       data.filter(d => d.foreign_net != null)
           .map(d => ({
             time: _toTime(d.date),
             value: d.foreign_net!,
-            color: d.foreign_net! >= 0 ? LW_COLORS.foreign + 'cc' : LW_COLORS.foreign + '55',
+            color: d.foreign_net! >= 0 ? LW_COLORS.foreign + 'bb' : LW_COLORS.foreign + '55',
           }))
     )
 
-    const instSeries = investChart.addSeries(LineSeries, {
-      color: LW_COLORS.inst, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+    // 기관 — 히스토그램, 독립 Y축
+    const instSeries = investChart.addSeries(HistogramSeries, {
+      priceScaleId: 'inst',
+      color: LW_COLORS.inst + 'bb', priceLineVisible: false, lastValueVisible: false,
+      autoscaleInfoProvider: () => ({ priceRange: instRange, margins: { above: 0.05, below: 0.05 } }),
     })
+    investChart.priceScale('inst').applyOptions({ visible: false })
     instSeries.setData(
       data.filter(d => d.inst_net != null)
-          .map(d => ({ time: _toTime(d.date), value: d.inst_net! }))
+          .map(d => ({
+            time: _toTime(d.date),
+            value: d.inst_net!,
+            color: d.inst_net! >= 0 ? LW_COLORS.inst + 'bb' : LW_COLORS.inst + '55',
+          }))
     )
 
-    const indivSeries = investChart.addSeries(LineSeries, {
-      color: LW_COLORS.indiv, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+    // 개인 — 히스토그램, 독립 Y축
+    const indivSeries = investChart.addSeries(HistogramSeries, {
+      priceScaleId: 'indiv',
+      color: LW_COLORS.indiv + 'bb', priceLineVisible: false, lastValueVisible: false,
+      autoscaleInfoProvider: () => ({ priceRange: indivRange, margins: { above: 0.05, below: 0.05 } }),
     })
+    investChart.priceScale('indiv').applyOptions({ visible: false })
     indivSeries.setData(
       data.filter(d => d.indiv_net != null)
-          .map(d => ({ time: _toTime(d.date), value: d.indiv_net! }))
+          .map(d => ({
+            time: _toTime(d.date),
+            value: d.indiv_net!,
+            color: d.indiv_net! >= 0 ? LW_COLORS.indiv + 'bb' : LW_COLORS.indiv + '55',
+          }))
     )
 
     // X축 동기화
@@ -447,11 +484,49 @@ interface ChartCanvasProps {
   flex?: boolean
 }
 
+function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      className="shrink-0 flex items-center justify-center group transition-colors"
+      style={{ height: 8, cursor: 'row-resize', userSelect: 'none' }}
+      onMouseDown={onMouseDown}
+    >
+      <div className="w-16 h-px bg-gray-700 group-hover:bg-sky-500/60 rounded-full transition-colors" />
+    </div>
+  )
+}
+
 function ChartCanvas({ symbol, data, period, priceHeight, investHeight, flex }: ChartCanvasProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const priceRef  = useRef<HTMLDivElement>(null)
   const investRef = useRef<HTMLDivElement>(null)
   const chartsRef = useRef<ChartRefs | null>(null)
   const hasInvestor = hasInvestorData(data)
+
+  // 드래그로 수급 패널 높이 조절
+  const [dynInvestH, setDynInvestH] = useState(investHeight)
+  useEffect(() => { setDynInvestH(investHeight) }, [investHeight])
+
+  const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startH = dynInvestH
+    const container = containerRef.current
+    document.body.style.userSelect = 'none'
+    const onMove = (ev: MouseEvent) => {
+      const dy = ev.clientY - startY  // 양수=아래로 드래그=수급 패널 축소
+      const totalH = container?.offsetHeight ?? 600
+      const newH = Math.max(100, Math.min(totalH - 100, startH - dy))
+      setDynInvestH(newH)
+    }
+    const onUp = () => {
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
 
   // Create charts once on mount
   useEffect(() => {
@@ -470,7 +545,7 @@ function ChartCanvas({ symbol, data, period, priceHeight, investHeight, flex }: 
       chartsRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol])  // remount on symbol change only; key prop handles modal
+  }, [symbol])
 
   // Update visible range on period change (no rebuild)
   useEffect(() => {
@@ -479,25 +554,35 @@ function ChartCanvas({ symbol, data, period, priceHeight, investHeight, flex }: 
     _applyPeriodRange(refs.priceChart, data, period)
   }, [period, data])
 
+  // 수급 패널 (우상단 범례 오버레이)
+  const investPanel = hasInvestor ? (
+    <div style={{ position: 'relative', height: dynInvestH, flexShrink: 0 }}>
+      <div ref={investRef} style={{ height: '100%' }} />
+      <div className="pointer-events-none select-none absolute top-1 right-2 flex items-center gap-2" style={{ fontSize: 9 }}>
+        <span style={{ color: LW_COLORS.foreign }}>■ 외국인</span>
+        <span style={{ color: LW_COLORS.inst }}>■ 기관</span>
+        <span style={{ color: LW_COLORS.indiv }}>■ 개인</span>
+      </div>
+    </div>
+  ) : (
+    <div className="text-center text-gray-600 text-xs py-2">투자자 데이터 없음</div>
+  )
+
   if (flex) {
     return (
-      <div className="flex flex-col" style={{ height: '100%' }}>
-        <div ref={priceRef} style={{ flex: 1 }} />
-        {hasInvestor
-          ? <div ref={investRef} style={{ height: investHeight }} />
-          : <div className="text-center text-gray-600 text-xs py-2">투자자 데이터 없음</div>
-        }
+      <div ref={containerRef} className="flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
+        <div ref={priceRef} style={{ flex: 1, minHeight: 80 }} />
+        {hasInvestor && <DragHandle onMouseDown={startDrag} />}
+        {investPanel}
       </div>
     )
   }
 
   return (
-    <div>
+    <div ref={containerRef}>
       <div ref={priceRef} style={{ height: priceHeight }} />
-      {hasInvestor
-        ? <div ref={investRef} style={{ height: investHeight }} />
-        : <div className="text-center text-gray-600 text-xs py-2">투자자 데이터 없음</div>
-      }
+      {hasInvestor && <DragHandle onMouseDown={startDrag} />}
+      {investPanel}
     </div>
   )
 }
@@ -570,7 +655,7 @@ export function getSupplyInfo(data: StockChartPoint[]): SupplyInfo | null {
   return { line, foreignColor }
 }
 
-export function StockInvestorChart({ symbol, name = '', onDataLoaded, priceHeight = 270, investHeight = 130, flex = false }: {
+export function StockInvestorChart({ symbol, name = '', onDataLoaded, priceHeight = 240, investHeight = 160, flex = false }: {
   symbol: string; name?: string; onDataLoaded?: (data: StockChartPoint[]) => void
   priceHeight?: number; investHeight?: number; flex?: boolean
 }) {
