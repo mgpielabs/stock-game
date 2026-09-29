@@ -3944,6 +3944,227 @@ async def sector_flows_analysis(
         return {"period": period, "sectors": [], "summary": f"오류: {e}", "top_inflow": [], "top_outflow": []}
 
 
+@app.get("/api/sector-flows/snapshot", summary="특정 날짜의 섹터 자금흐름 스냅샷")
+async def sector_flows_snapshot(date: str = Query(...)) -> Dict[str, Any]:
+    """날짜(YYYYMMDD)를 받아 해당 날짜 기준 섹터별 순매수 상위/하위 및 KOSPI 등락률 반환."""
+    try:
+        import json as _json
+        ksic_file = BACKEND_ROOT / "data" / "ksic_sector_names.json"
+        sector_names: Dict[str, str] = {}
+        if ksic_file.exists():
+            sector_names = _json.loads(ksic_file.read_text(encoding="utf-8"))
+
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute("""
+                SELECT SUBSTR(s.sector, 1, 3) AS sec3,
+                       SUM(k.foreign_value + k.inst_total_value) AS fi_sum,
+                       SUM(k.foreign_value) AS fv_sum,
+                       SUM(k.inst_total_value) AS iv_sum,
+                       COUNT(DISTINCT k.symbol) AS n_sym
+                FROM investor_trading_kis_detail k
+                JOIN stocks s ON k.symbol = s.symbol
+                WHERE k.date = ? AND s.sector IS NOT NULL
+                      AND LENGTH(SUBSTR(s.sector, 1, 3)) = 3
+                GROUP BY sec3
+                HAVING n_sym >= 3
+                ORDER BY fi_sum DESC
+            """, (date,)).fetchall()
+
+            ind_rows = conn.execute(
+                "SELECT indicator, value FROM macro_indicators WHERE date = ?", (date,)
+            ).fetchall()
+
+            kospi_row = conn.execute(
+                "SELECT close, open FROM market_index WHERE date = ? AND code = '1001'", (date,)
+            ).fetchone()
+
+        if not rows:
+            return {"date": date, "no_data": True,
+                    "message": f"{date}에 해당하는 섹터 데이터 없음 (주말·휴장일 또는 수집 미완료)"}
+
+        def _fmt(val: float) -> float:
+            return round(val / 100, 1)  # 백만원 → 억원
+
+        sectors_list = [
+            {
+                "code": r[0],
+                "name": sector_names.get(r[0], r[0]),
+                "flow_total": _fmt(r[1]),
+                "flow_foreign": _fmt(r[2]),
+                "flow_inst": _fmt(r[3]),
+                "n_symbols": r[4],
+            }
+            for r in rows
+        ]
+
+        top5_inflow = sectors_list[:5]
+        top5_outflow = sorted(sectors_list, key=lambda x: x["flow_total"])[:5]
+
+        kospi_return = None
+        if kospi_row and kospi_row[1]:
+            kospi_return = round((kospi_row[0] - kospi_row[1]) / kospi_row[1] * 100, 2)
+
+        indicators = {r[0]: round(r[1], 4) for r in ind_rows}
+
+        return {
+            "date": date,
+            "no_data": False,
+            "top_inflow": top5_inflow,
+            "top_outflow": top5_outflow,
+            "sector_count": len(sectors_list),
+            "kospi_return": kospi_return,
+            "indicators": indicators,
+        }
+    except Exception as exc:
+        logger.exception("sector-flows/snapshot 오류")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/sector-flows/event-stats", summary="이벤트 구간 섹터 익일 통계")
+async def sector_flows_event_stats(
+    indicator: str = Query(...),
+    threshold_pct: float = Query(default=90.0),
+    days: int = Query(default=1095),
+    direction: str = Query(default="above"),
+    reference_value: Optional[float] = Query(default=None),
+    reference_date: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    """특정 지표가 상위/하위 N% 이상인 날들의 익일 섹터 자금흐름 평균/중앙값/승률 반환.
+    reference_value + reference_date 제공 시 클릭 날짜 기준 퍼센타일을 자동 계산."""
+    try:
+        import json as _json, statistics as _stats
+        from collections import defaultdict as _dd
+
+        ksic_file = BACKEND_ROOT / "data" / "ksic_sector_names.json"
+        sector_names: Dict[str, str] = {}
+        if ksic_file.exists():
+            sector_names = _json.loads(ksic_file.read_text(encoding="utf-8"))
+
+        with sqlite3.connect(DB_PATH) as conn:
+            # 전체 기간 지표값 로드
+            ind_rows = conn.execute(
+                "SELECT date, value FROM macro_indicators WHERE indicator=? ORDER BY date DESC LIMIT ?",
+                (indicator, days)
+            ).fetchall()
+
+            if not ind_rows:
+                return {"indicator": indicator, "event_count": 0, "no_data": True}
+
+            vals = [r[1] for r in ind_rows]
+            dates_all = [r[0] for r in ind_rows]
+
+            # 임계값 및 방향 결정
+            threshold_val: float
+            if reference_value is not None:
+                # 클릭 날짜 기준 3년 윈도우에서 퍼센타일 계산
+                if reference_date:
+                    w_rows = conn.execute(
+                        "SELECT value FROM macro_indicators WHERE indicator=? AND date <= ? ORDER BY date DESC LIMIT ?",
+                        (indicator, reference_date, days)
+                    ).fetchall()
+                    window_vals = sorted(r[0] for r in w_rows) if w_rows else sorted(vals)
+                else:
+                    window_vals = sorted(vals)
+                n_w = len(window_vals)
+                rank = sum(1 for v in window_vals if v <= reference_value)
+                computed_pct = rank / n_w * 100
+                threshold_val = float(reference_value)
+                if computed_pct >= 50:
+                    direction = "above"
+                    threshold_pct = computed_pct
+                else:
+                    direction = "below"
+                    threshold_pct = 100.0 - computed_pct
+            else:
+                sorted_vals = sorted(vals)
+                n = len(sorted_vals)
+                if direction == "above":
+                    threshold_val = sorted_vals[max(0, int(n * threshold_pct / 100) - 1)]
+                else:
+                    threshold_val = sorted_vals[min(n - 1, int(n * (1 - threshold_pct / 100)))]
+
+            # 이벤트 날짜 선택
+            if direction == "above":
+                event_dates = [d for d, v in zip(dates_all, vals) if v >= threshold_val]
+            else:
+                event_dates = [d for d, v in zip(dates_all, vals) if v <= threshold_val]
+
+            if not event_dates:
+                return {"indicator": indicator, "event_count": 0, "threshold_val": threshold_val, "no_data": True}
+
+            # 익일 맵핑
+            trading_days = [r[0] for r in conn.execute(
+                "SELECT DISTINCT date FROM investor_trading_kis_detail ORDER BY date"
+            ).fetchall()]
+
+            next_day_map: Dict[str, str] = {}
+            for d in sorted(event_dates):
+                try:
+                    idx = trading_days.index(d)
+                    if idx + 1 < len(trading_days):
+                        next_day_map[d] = trading_days[idx + 1]
+                except ValueError:
+                    pass
+
+            next_days = list(set(next_day_map.values()))
+            if not next_days:
+                return {"indicator": indicator, "event_count": len(event_dates),
+                        "threshold_val": threshold_val, "no_data": True}
+
+            placeholders = ",".join(["?"] * len(next_days))
+            flow_rows = conn.execute(f"""
+                SELECT k.date, SUBSTR(s.sector, 1, 3) AS sec3,
+                       SUM(k.foreign_value + k.inst_total_value) AS fi_sum,
+                       COUNT(DISTINCT k.symbol) AS n_sym
+                FROM investor_trading_kis_detail k
+                JOIN stocks s ON k.symbol = s.symbol
+                WHERE k.date IN ({placeholders}) AND s.sector IS NOT NULL
+                      AND LENGTH(SUBSTR(s.sector, 1, 3)) = 3
+                GROUP BY k.date, sec3
+                HAVING n_sym >= 3
+            """, next_days).fetchall()
+
+        sec_flows: Dict[str, list] = _dd(list)
+        for r in flow_rows:
+            sec_flows[r[1]].append(r[2] / 100)  # 억원
+
+        actual_count = len(next_day_map)
+        sector_stats = []
+        for sec3, flow_list in sec_flows.items():
+            if len(flow_list) < 2:
+                continue
+            avg = sum(flow_list) / len(flow_list)
+            med = _stats.median(flow_list)
+            win_rate = sum(1 for f in flow_list if f > 0) / len(flow_list) * 100
+            sector_stats.append({
+                "code": sec3,
+                "name": sector_names.get(sec3, sec3),
+                "n": len(flow_list),
+                "avg": round(avg, 1),
+                "median": round(med, 1),
+                "win_rate": round(win_rate, 1),
+            })
+
+        sector_stats.sort(key=lambda x: x["avg"], reverse=True)
+
+        return {
+            "indicator": indicator,
+            "direction": direction,
+            "threshold_pct": round(threshold_pct, 1),
+            "threshold_val": round(threshold_val, 4),
+            "event_count": actual_count,
+            "low_sample": actual_count < 5,
+            "sector_count": len(sector_stats),
+            "reference_date": reference_date,
+            "top_benefit": sector_stats[:5],
+            "top_hurt": sorted(sector_stats, key=lambda x: x["avg"])[:5],
+            "all_sectors": sector_stats,
+        }
+    except Exception as exc:
+        logger.exception("sector-flows/event-stats 오류")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/api/calendar", summary="월간 캘린더 이벤트 조회")
 async def calendar_events(
     year: int = Query(default=2026, ge=2020, le=2030),
@@ -4759,6 +4980,28 @@ def _get_macro_summary_cached(today: str) -> Dict[str, Any]:
 async def macro_summary() -> Dict[str, Any]:
     today = datetime.now().strftime("%Y%m%d")
     return _get_macro_summary_cached(today)
+
+
+@app.get("/api/sector-flows/latest-date", summary="섹터 자금흐름 데이터 최신 날짜 + 해당일 지표값")
+async def sector_flows_latest_date() -> Dict[str, Any]:
+    """섹터 스냅샷이 존재하는 가장 최근 날짜와 해당 날짜의 매크로 지표값을 반환."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT MAX(date) FROM investor_trading_kis_detail"
+            ).fetchone()
+            latest_date: Optional[str] = row[0] if row else None
+            indicator_values: Dict[str, float] = {}
+            if latest_date:
+                ind_rows = conn.execute(
+                    "SELECT indicator, value FROM macro_indicators WHERE date=?",
+                    (latest_date,)
+                ).fetchall()
+                indicator_values = {r[0]: round(float(r[1]), 4) for r in ind_rows}
+        return {"date": latest_date, "indicator_values": indicator_values}
+    except Exception as exc:
+        logger.exception("sector-flows/latest-date 오류")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/macro/series", summary="매크로 지표 시계열 (indicator별)")

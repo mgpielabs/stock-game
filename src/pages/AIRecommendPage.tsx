@@ -2472,7 +2472,18 @@ function SectorFlowCard() {
   if (!data) return null
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-      <h2 className="text-white font-semibold text-sm">섹터 자금 흐름</h2>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h2 className="text-white font-semibold text-sm">섹터 자금 흐름</h2>
+          <p className="text-gray-500 text-[11px] mt-0.5">최근 5일 외국인·기관 순매수 합계 상위 6개 섹터</p>
+        </div>
+        <Link
+          to="/screener"
+          className="shrink-0 text-[11px] text-sky-400 hover:text-sky-300 transition-colors"
+        >
+          전체 보기 →
+        </Link>
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {data.sectors.slice(0, 6).map(s => {
           const label = _momentumLabel(s.momentum_5d)
