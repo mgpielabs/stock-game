@@ -121,13 +121,25 @@ def fetch_alot_matter(corp_code: str, biz_year: int) -> List[Dict]:
 
 
 def parse_dividend_record(items: List[Dict]) -> Dict:
-    """alotMatter 응답을 보통주/우선주 DPS·배당수익률 + 공통 항목으로 정리."""
+    """alotMatter 응답을 보통주/우선주 DPS·배당수익률 + 공통 항목으로 정리.
+
+    DART 형식 변경 대응 (2026-08-26):
+    - 표준: stock_knd="보통주"/"우선주"로 행 구분
+    - 다종우선주: "1우선주"/"2우선주" → "우선주" in knd 부분 매칭
+    - 삼성물산 등: "보통주식"/"종류주식"
+    - KCC 등: "의결권 있는 주식"/"의결권 없는 주식"
+    - FY2025+: stock_knd="-"로 모든 행 반환 → 등장 순서로 판별
+      단, 명시적 행(보통주식 등)이 이미 처리된 경우 대시 행은 preferred 슬롯으로
+    - 시기형: "결산배당"/"중간배당"/"분기배당" → 누적 합산해 common_dps에 저장
+    """
     result: Dict = {
         "common_dps": None, "common_yield": None,
         "preferred_dps": None, "preferred_yield": None,
         "payout_ratio": None, "eps": None, "par_value": None,
         "settlement_date": None,
     }
+    dps_dash_count = 0
+    yield_dash_count = 0
     for item in items:
         se = item.get("se", "") or ""
         knd = item.get("stock_knd", "") or ""
@@ -144,15 +156,55 @@ def parse_dividend_record(items: List[Dict]) -> Dict:
                 _log.getLogger(__name__).warning(
                     "DPS > 1,000,000 감지 (%s 원) — DART 공시 오류 추정, None 처리", val)
                 val = None
-            if knd == "보통주":
-                result["common_dps"] = val
-            elif knd == "우선주":
-                result["preferred_dps"] = val
+            if knd in ("보통주", "보통주식", "일반주", "대주주", "소액주주") or ("보통주" in knd and "우선주" not in knd) or "의결권있는" in knd or "의결권 있는" in knd:
+                # "대주주"/"소액주주": 주주 규모 구분이지 주식 종류 아님 — 동일 보통주 DPS
+                # "일반주": 보통주 동의어
+                # 중복 knd 행(두 번째 '-' 값이 첫 번째 정상값을 덮어쓰는 버그) 방지
+                if result["common_dps"] is None:
+                    result["common_dps"] = val
+            elif "우선주" in knd or "종류주" in knd or "의결권없는" in knd or "의결권 없는" in knd:
+                # "우선주", "1우선주", "2우선주", "종류주", "종류주식", "1종 종류주식",
+                # "의결권 없는 주식", "의결권없는주식수" 모두 처리
+                if result["preferred_dps"] is None:
+                    result["preferred_dps"] = val
+            elif knd in ("결산배당", "중간배당", "분기배당",
+                         "결산 배당", "중간 배당", "분기 배당",
+                         "기말배당금", "중간, 분기배당금"):
+                # 시기형 형식(058610 등): 결산/중간/분기 배당을 누적해 common_dps에 합산
+                # Bug 12: 공백 포함 형식("결산 배당"), Bug 14: 다른 타이밍 이름("기말배당금")
+                result["common_dps"] = (result["common_dps"] or 0) + (val or 0) or None
+            elif knd in ("-", ""):
+                # DART FY2025+ 형식: stock_knd="-"로 모든 행 반환 — 등장 순서로 판별
+                # 단, 명시적 knd 행이 이미 common_dps를 채운 경우 대시 행은 preferred 슬롯으로
+                dps_dash_count += 1
+                if dps_dash_count == 1:
+                    if result["common_dps"] is None:
+                        result["common_dps"] = val
+                    else:
+                        result["preferred_dps"] = val
+                elif dps_dash_count == 2:
+                    result["preferred_dps"] = val
         elif "현금배당수익률" in se:
-            if knd == "보통주":
-                result["common_yield"] = val
-            elif knd == "우선주":
-                result["preferred_yield"] = val
+            if knd in ("보통주", "보통주식", "일반주", "대주주", "소액주주") or ("보통주" in knd and "우선주" not in knd) or "의결권있는" in knd or "의결권 있는" in knd:
+                if result["common_yield"] is None:
+                    result["common_yield"] = val
+            elif "우선주" in knd or "종류주" in knd or "의결권없는" in knd or "의결권 없는" in knd:
+                if result["preferred_yield"] is None:
+                    result["preferred_yield"] = val
+            elif knd in ("결산배당", "중간배당", "분기배당",
+                         "결산 배당", "중간 배당", "분기 배당",
+                         "기말배당금", "중간, 분기배당금"):
+                # 시기형 배당수익률 — 합산(또는 마지막값) 으로 common_yield 저장
+                result["common_yield"] = (result["common_yield"] or 0) + (val or 0) or None
+            elif knd in ("-", ""):
+                yield_dash_count += 1
+                if yield_dash_count == 1:
+                    if result["common_yield"] is None:
+                        result["common_yield"] = val
+                    else:
+                        result["preferred_yield"] = val
+                elif yield_dash_count == 2:
+                    result["preferred_yield"] = val
         elif "현금배당성향" in se:
             result["payout_ratio"] = val
         elif "주당순이익" in se and "연결" in se:
@@ -244,12 +296,15 @@ def run(years: int, symbols_filter: Optional[List[str]], dry_run: bool) -> None:
     biz_years = list(range(end_year - years + 1, end_year + 1))
     logger.info("대상 사업연도: %s", biz_years)
 
-    # 이미 dividends에 행이 있는 (symbol, biz_year)는 건너뜀 — 한 법인의 모든 심볼(보통/우선주)
-    # 전부 행이 있어야 "완료"로 간주(2026-06-23, bps_collector.py와 동일 skip 패턴). 행이
-    # 없는 건 "진짜 무배당"일 수도, "이전 burst 실패로 누락"일 수도 있어 재시도 대상으로 둠
-    # — 이번 재수집의 핵심 목적이 바로 그 둘을 구분해내는 것.
+    # 이미 dividends에 행이 있는 (symbol, biz_year)는 건너뜀 — 단, dps IS NULL이면서
+    # payout_ratio IS NOT NULL인 경우는 "파서가 DPS를 못 읽은 실패 행"이므로 완료로 보지 않음.
+    # (2026-08-26) DART FY2025+ 형식에서 stock_knd="-" 반환으로 common_dps=None이 저장된
+    # 981건을 재수집하기 위한 수정 — 기존에는 행 존재 여부만 체크해 이런 행이 영구 skip됐음.
     with get_connection() as conn:
-        done_rows = conn.execute("SELECT DISTINCT symbol, biz_year FROM dividends").fetchall()
+        done_rows = conn.execute(
+            "SELECT DISTINCT symbol, biz_year FROM dividends "
+            "WHERE dps IS NOT NULL OR payout_ratio IS NULL"
+        ).fetchall()
     done_by_year: Dict[int, set] = {}
     for sym, yr in done_rows:
         done_by_year.setdefault(yr, set()).add(sym)
