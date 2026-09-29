@@ -22,7 +22,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # 콘솔이 cp949인 환경(.bat 더블클릭 등)에서 UnicodeEncodeError 방지 — 자식 프로세스들에도
@@ -92,6 +92,27 @@ def _touch_heartbeat() -> None:
     if time.time() - _pl_last_write_t < 30:
         return
     _write_pipeline_status(_pl_current_stage, _pl_current_stage_name)
+
+
+def _write_backfill_status(current: int, total: int, date_str: str) -> None:
+    """백필 진행 상황을 STATUS_FILE에 원자적으로 기록 — 프론트에서 '백필 중' 배너 표시용."""
+    try:
+        data = json.dumps({
+            "started_at":         _pl_started_at,
+            "current_stage":      0,
+            "current_stage_name": f"백필 중: {current}/{total}일 완료 ({date_str})",
+            "total_stages":       13,
+            "last_heartbeat":     time.time(),
+            "status":             "backfill",
+            "backfill_current":   current,
+            "backfill_total":     total,
+            "backfill_date":      date_str,
+        }, ensure_ascii=False)
+        _tmp = STATUS_FILE.with_suffix(".tmp")
+        _tmp.write_text(data, encoding="utf-8")
+        os.replace(str(_tmp), str(STATUS_FILE))
+    except Exception as e:
+        log.warning("백필 상태 기록 실패: %s", e)
 
 
 def _write_skip_status(reason: str) -> None:
@@ -292,11 +313,15 @@ def restart_server(dry_run: bool = False) -> None:
         return
 
     # PM2로 재시작 시도 (autorestart 사이클 유지, PM2 대시보드 상태 일관성)
+    # encoding="utf-8": PM2(Node.js)가 UTF-8 출력하는데 text=True 기본값(cp949)으로
+    # 디코딩하면 UnicodeDecodeError 발생 → 파이프라인이 3단계에서 조용히 종료되는 버그 수정
     log.info("PM2로 서버 재시작: npx pm2 restart stock-backend --update-env")
     pm2_result = subprocess.run(
         ["npx", "pm2", "restart", "stock-backend", "--update-env"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
         creationflags=SUBPROCESS_FLAGS,
     )
@@ -331,6 +356,51 @@ def restart_server(dry_run: bool = False) -> None:
 
 def is_weekday() -> bool:
     return datetime.now().weekday() < 5
+
+
+def _get_missing_trading_days() -> list:
+    """prices 테이블 마지막 날짜 이후 누락된 KRX 거래일 목록을 반환.
+
+    - 16:30 이전이면 오늘 장이 아직 안 끝났을 수 있으므로 어제까지만 확인
+    - DB 오류·pykrx 오류 시 빈 목록 반환 (비치명적)
+    """
+    try:
+        from pykrx import stock as _stock
+
+        db_path = DATA_DIR / "stocks.db"
+        with sqlite3.connect(str(db_path)) as conn:
+            row = conn.execute("SELECT MAX(date) FROM prices").fetchone()
+            last_date = row[0] if row and row[0] else None
+
+        if last_date is None:
+            return []
+
+        now = datetime.now()
+        today = date.today()
+
+        # 16:30 이전이면 오늘 종가 데이터가 아직 없으므로 어제까지만 체크
+        if now.hour < 16 or (now.hour == 16 and now.minute < 30):
+            target_end = today - timedelta(days=1)
+        else:
+            target_end = today
+
+        last_dt = datetime.strptime(last_date, "%Y%m%d").date()
+        if last_dt >= target_end:
+            return []  # 이미 최신
+
+        start_str = (last_dt + timedelta(days=1)).strftime("%Y%m%d")
+        end_str = target_end.strftime("%Y%m%d")
+
+        # pykrx로 해당 기간의 실제 거래일 목록 조회
+        df = _stock.get_index_ohlcv_by_date(start_str, end_str, "1001")
+        if df is None or df.empty:
+            return []
+
+        return sorted(df.index.strftime("%Y%m%d").tolist())
+
+    except Exception as e:
+        log.warning("누락 거래일 확인 실패(비치명적): %s", e)
+        return []
 
 
 def _is_trading_day(today_str: str) -> bool:
@@ -468,6 +538,42 @@ def main() -> None:
         if args.dry_run:
             log.info("[DRY-RUN 모드]")
 
+        # 백필: prices에 누락된 거래일이 있으면 먼저 OHLCV만 채움
+        missing_days = _get_missing_trading_days()
+        if missing_days:
+            n = len(missing_days)
+            if n > 7:
+                log.warning(
+                    "누락 거래일 %d일 발견 — API 호출 제한으로 최근 5거래일만 백필합니다.", n
+                )
+                missing_days = missing_days[-5:]
+                n = len(missing_days)
+
+            log.info(
+                "누락 거래일 %d일 백필 시작: %s ~ %s", n, missing_days[0], missing_days[-1]
+            )
+            _write_backfill_status(0, n, missing_days[0])
+
+            for i, day in enumerate(missing_days):
+                log.info("백필 %d/%d: %s", i + 1, n, day)
+                _write_backfill_status(i, n, day)
+                # OHLCV만 수집 (과거 날짜 지정, fundamentals/flows는 당일에만 의미 있음)
+                run(
+                    ["collector.py", "--start", day, "--end", day, "--ohlcv-only"],
+                    cwd=DATA_DIR, label=f"백필수집({day})", dry_run=args.dry_run,
+                )
+                _write_backfill_status(i + 1, n, day)
+
+            # 백필 기간 포함 지수 데이터 증분 수집 (index_collector는 자체 증분 로직)
+            log.info("백필: 지수 데이터 증분 수집")
+            run(["index_collector.py"], cwd=DATA_DIR, label="백필지수수집", dry_run=args.dry_run)
+
+            # 백필 기간 포함 피처 계산 (마지막 피처 날짜 이후 자동으로 따라잡음)
+            log.info("백필: 피처 증분 계산")
+            run(["pipeline.py"], cwd=FEAT_DIR, label="백필피처계산", dry_run=args.dry_run)
+
+            log.info("백필 완료: %d일치 데이터 수집 완료 — 정규 파이프라인 계속", n)
+
         # 1. 오늘치 데이터만 증분 수집 (INSERT OR IGNORE — 중복 안전)
         _sep("1단계: 오늘치 데이터 증분 수집")
         run(["collector.py"], cwd=DATA_DIR, label="수집", dry_run=args.dry_run)
@@ -485,7 +591,11 @@ def main() -> None:
         if args.no_server_restart:
             _sep("3단계: 서버 재시작 (건너뜀, 호출 측이 인프로세스 핫리로드 처리)")
         else:
-            restart_server(dry_run=args.dry_run)
+            try:
+                restart_server(dry_run=args.dry_run)
+            except Exception as exc:
+                # 서버 재시작 실패는 비치명적 — 4단계 이후를 계속 실행
+                log.error("서버 재시작 중 오류 (비치명적, 4단계부터 계속): %s", exc)
 
         # 4. 모의투자 만기 거래 청산 (lifespan 실패 시 보험)
         _sep("4단계: 모의투자 만기 거래 청산")
@@ -544,12 +654,13 @@ def main() -> None:
         )
 
         # 9-2. KIS investor_trading_kis_detail 증분 갱신 — 연기금(pension) 포함 8개 투자자 유형
-        # — 백필 API(FHPTJ04160001)는 앵커 기준 최근 ~30거래일 반환. 7일 이상 갱신 안 된
+        # — 백필 API(FHPTJ04160001)는 앵커 기준 최근 ~30거래일 반환. 1일 이상 갱신 안 된
         # 종목부터 400건씩 순차 갱신. daily_pipeline 16:30 실행이라 TIME LIMIT(15:40~) 내 정상 작동.
+        # — stale-days 1: 하루라도 공백이면 갱신 (기본값 7은 6일 공백을 스킵하는 버그 가능)
         # — run_optional: API 장애/TIME LIMIT 발생 시에도 파이프라인 전체를 막지 않음 (2026-08-09)
         _sep("9-2단계: KIS 연기금 포함 투자자상세(detail) 증분 갱신")
         run_optional(
-            ["kis_investor_detail_updater.py", "--max-jobs", "400"],
+            ["kis_investor_detail_updater.py", "--max-jobs", "400", "--stale-days", "1"],
             cwd=DATA_DIR, label="KIS연기금상세갱신", dry_run=args.dry_run,
         )
 

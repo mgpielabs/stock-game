@@ -1159,7 +1159,9 @@ export function DataUpdateBanner({ initialDate, onComplete }: { initialDate?: st
     const tick = async () => {
       const s = await poll()
       if (cancelled) return
+      // running이면 3초, idle이면 15초마다 재폴링 (외부 파이프라인 시작 감지)
       if (s?.status === 'running') timer = setTimeout(tick, 3000)
+      else if (!s || s.status === 'idle') timer = setTimeout(tick, 15000)
     }
     tick()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }

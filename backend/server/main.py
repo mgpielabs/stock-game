@@ -1240,7 +1240,12 @@ def _read_last_log_lines(n: int = 5) -> List[str]:
 
 
 def _check_update_already_running() -> bool:
-    """daily_pipeline.py의 락파일로 .bat 등 다른 경로의 실행도 감지."""
+    """daily_pipeline.py의 락파일로 .bat 등 다른 경로의 실행도 감지.
+
+    1차: daily_pipeline.pid + tasklist PID 확인
+    2차 폴백: pipeline_status.json의 status='running' + 하트비트 2분 이내
+    (Windows 락 파일 읽기 실패 등으로 1차가 안 될 때 보완)
+    """
     if _UPDATE_LOCK_FILE.exists():
         try:
             pid = int(_UPDATE_LOCK_FILE.read_text().strip())
@@ -1251,6 +1256,17 @@ def _check_update_already_running() -> bool:
                 return True
         except Exception:
             pass
+    # 폴백: pipeline_status.json에 running + 최근 하트비트 확인
+    try:
+        if _PIPELINE_STATUS_FILE.exists():
+            ps = _read_pipeline_status()
+            ps_status = ps.get("pipeline_status")
+            heartbeat = ps.get("last_heartbeat")
+            if ps_status == "running" and heartbeat:
+                if time.time() - float(heartbeat) < 120:
+                    return True
+    except Exception:
+        pass
     return False
 
 
