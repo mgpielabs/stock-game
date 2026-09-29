@@ -1892,7 +1892,7 @@ export function StockCompareView({
 
 function SectorTreemap({
   sectors, period, compareMode = false, periodB = 'combined_60d', onStockSelect,
-  onPeriodChange, onToggleCompare, onPeriodBChange, onApplyFilters,
+  onPeriodChange, onToggleCompare, onPeriodBChange, onApplyFilters, initialDrilldown,
 }: {
   sectors: SectorFlowResponse['sectors']
   period: PeriodKey
@@ -1903,11 +1903,20 @@ function SectorTreemap({
   onToggleCompare?: () => void
   onPeriodBChange?: (p: PeriodKey) => void
   onApplyFilters?: (filters: Partial<ScreenerFilters>) => void
+  initialDrilldown?: string | null
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [tmWidth, setTmWidth] = useState(0)
   // null = 섹터 전체 뷰, sector code = 해당 섹터 드릴다운 뷰
   const [drilldown, setDrilldown] = useState<string | null>(null)
+  const prevInitialDrilldownRef = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    if (initialDrilldown != null && initialDrilldown !== prevInitialDrilldownRef.current) {
+      setDrilldown(initialDrilldown)
+    }
+    // 매크로로 돌아갔다가 같은 섹터를 다시 선택해도 드릴다운을 적용한다.
+    prevInitialDrilldownRef.current = initialDrilldown
+  }, [initialDrilldown])
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fsW, setFsW] = useState(0)
   const [fsH, setFsH] = useState(0)
@@ -2301,6 +2310,7 @@ function SectorTreemap({
 
 export default function ScreenerPage({
   embedded = false,
+  initialDrilldown = null,
   externalFilters = null,
   onExternalFiltersApplied,
   refetchTick,
@@ -2311,6 +2321,7 @@ export default function ScreenerPage({
   onToggleWatchlist: externalToggleWatchlist,
 }: {
   embedded?: boolean
+  initialDrilldown?: string | null
   externalFilters?: Record<string, boolean> | null
   onExternalFiltersApplied?: () => void
   refetchTick?: number
@@ -2349,6 +2360,32 @@ export default function ScreenerPage({
   const [sectorSortPeriod, setSectorSortPeriod] = useState<PeriodKey>('combined_5d')
   const [sectorCompareMode, setSectorCompareMode] = useState(false)
   const [sectorSortPeriodB, setSectorSortPeriodB] = useState<PeriodKey>('combined_60d')
+  const sectorTreemapRef = useRef<HTMLDivElement>(null)
+
+  // 매크로에서 전달한 섹터를 기존 섹터 흐름 화면으로 연다.
+  useEffect(() => {
+    if (!initialDrilldown) return
+    setSectorMode(true)
+    setCrossMode(false)
+  }, [initialDrilldown])
+
+  // 버튼과 외부 섹터 선택이 같은 데이터 로딩 경로를 사용한다.
+  useEffect(() => {
+    if (!sectorMode || sectorData) return
+    let cancelled = false
+    setSectorLoading(true)
+    setSectorError(null)
+    screenerApi.sectorFlow()
+      .then(res => { if (!cancelled) setSectorData(res) })
+      .catch((e: Error) => { if (!cancelled) setSectorError(e.message) })
+      .finally(() => { if (!cancelled) setSectorLoading(false) })
+    return () => { cancelled = true }
+  }, [sectorMode, sectorData])
+
+  useEffect(() => {
+    if (!initialDrilldown || !sectorMode || !sectorData || sectorLoading) return
+    sectorTreemapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [initialDrilldown, sectorMode, sectorData, sectorLoading])
 
   // ③ 종목 쏠림 설명 토글
   const [showConcentrationInfo, setShowConcentrationInfo] = useState(false)
@@ -2497,14 +2534,6 @@ export default function ScreenerPage({
     if (!sectorMode) {
       setSectorMode(true)
       setCrossMode(false)
-      if (!sectorData) {
-        setSectorLoading(true)
-        setSectorError(null)
-        screenerApi.sectorFlow()
-          .then(res => { setSectorData(res) })
-          .catch((e: Error) => { setSectorError(e.message) })
-          .finally(() => { setSectorLoading(false) })
-      }
     } else {
       setSectorMode(false)
     }
@@ -3039,11 +3068,12 @@ export default function ScreenerPage({
             </div>
 
             {sectorData && !sectorLoading && (
-              <div className="rounded-xl overflow-hidden border border-gray-800 bg-gray-900/60 p-2">
+              <div ref={sectorTreemapRef} className="scroll-mt-16 rounded-xl overflow-hidden border border-gray-800 bg-gray-900/60 p-2">
                 <p className="text-xs text-gray-500 px-1 mb-2">
                   박스 크기 = 자금 규모, 초록 = 유입, 빨강 = 유출. 클릭하면 상세 보기.
                 </p>
                 <SectorTreemap
+                  initialDrilldown={initialDrilldown}
                   sectors={sectorData.sectors}
                   period={sectorSortPeriod}
                   compareMode={sectorCompareMode}

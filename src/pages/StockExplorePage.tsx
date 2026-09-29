@@ -340,6 +340,7 @@ export default function StockExplorePage() {
         <div className={activeTab !== 'screener' ? 'hidden' : ''}>
           <ScreenerPage
             embedded
+            initialDrilldown={activeTab === 'screener' ? searchParams.get('sector') : null}
             externalFilters={screenerExternalFilters}
             onExternalFiltersApplied={() => setScreenerExternalFilters(null)}
             refetchTick={updateDoneTick}
@@ -353,7 +354,9 @@ export default function StockExplorePage() {
       )}
       {macroMounted && (
         <div className={activeTab !== 'macro' ? 'hidden' : ''}>
-          <MacroDashboard />
+          <MacroDashboard
+            onSectorClick={code => navigate(`/screener?sector=${encodeURIComponent(code)}`)}
+          />
         </div>
       )}
       {/* 비교 플로팅 바 */}
