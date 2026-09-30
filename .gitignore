@@ -39,3 +39,17 @@ backend/data/*.db-shm
 backend/data/*.db-wal
 backend/data/recommendation_log.json
 backend/data/backups/
+
+# Local database backups
+/backend/data/stocks.db.bak_*
+
+# Runtime PID and temporary files
+*.pid
+*.tmp
+
+# CatBoost generated training artifacts
+catboost_info/
+
+# One-off execution output
+/backend/kis_backfill_run.out
+/backend/ml/combo_discovery_out.txt
